@@ -233,8 +233,8 @@ tabulate
 typing-extensions
 IN
 
-pip-compile --allow-unsafe requirements.in
-pip install --no-cache-dir -r requirements.txt
+python -m piptools compile --allow-unsafe requirements.in
+python -m pip install --no-cache-dir -r requirements.txt
 
 ```
 
