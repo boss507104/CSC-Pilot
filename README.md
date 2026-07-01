@@ -1,4 +1,4 @@
-# CSC Environment Helpers
+# CSC Pilot
 
 Last updated: 25 June 2026
 
