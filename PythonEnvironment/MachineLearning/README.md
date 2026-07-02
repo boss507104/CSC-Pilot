@@ -244,8 +244,6 @@ Request an interactive session on a test node to execute the container packaging
 ```bash
 srun --account=$CSC_PROJECT --partition=small --nodes=1 --ntasks=1 \
      --cpus-per-task=16 --time=01:30:00 --pty bash
-
-
 ```
 
 If network limits delay package downloads, switch to `--partition=medium` to lengthen runtime.
