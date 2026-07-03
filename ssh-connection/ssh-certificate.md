@@ -6,30 +6,30 @@ This guide covers:
 2. Configuring the CSC username
 3. Generating and renewing an SSH certificate with `csc-ssh-keys`
 
-***
+---
 
 ## 1. Clone the CSC Certificate Helper Tool
 
-Run this once on the local workstation:
+Run this once on your local workstation:
 
 ```bash
 cd ~
 git clone https://github.com/CSCfi/certificate-helper-tool.git
 ```
 
-***
+---
 
-## 2. Add the CSC SSH Certificate Configuration
+## 2. Configure the CSC SSH Certificate Helper
 
-Set `CSC_USER` to your CSC username and add the `csc-ssh-keys` function to `~/.zshrc`:
+Replace `Harry` with your own CSC username, then append the following configuration to `~/.zshrc`:
 
 ```bash
 cat >> ~/.zshrc <<'EOF'
 
 # CSC SSH certificate configuration
-CSC_USER="kanghans"
+export CSC_USER="Harry"
 
-# Generate a CSC SSH certificate
+# Generate or renew a CSC SSH certificate
 csc-ssh-keys() {
     (
         cd ~/certificate-helper-tool || return 1
@@ -39,7 +39,7 @@ csc-ssh-keys() {
 EOF
 ```
 
-The CSC username now appears in only one place. Change the value of `CSC_USER` when configuring the setup for another account.
+The CSC username now appears in only one place. If you later use a different CSC account, simply change the value of `CSC_USER`.
 
 Reload the Zsh configuration:
 
@@ -47,11 +47,11 @@ Reload the Zsh configuration:
 source ~/.zshrc
 ```
 
-***
+---
 
 ## 3. Test SSH Certificate Generation
 
-To test the underlying certificate-generation command directly:
+First, test the certificate helper directly:
 
 ```bash
 python3 ~/certificate-helper-tool/csc_cert.py \
@@ -59,12 +59,18 @@ python3 ~/certificate-helper-tool/csc_cert.py \
     ~/.ssh/id_ed25519.pub
 ```
 
-The command opens a browser for CSC authentication and generates an SSH certificate for the existing public key.
+The command opens a browser for CSC authentication and signs your existing SSH public key, generating a new CSC SSH certificate.
 
-Verify the persistent command:
+Next, verify that the helper function works:
 
 ```bash
 csc-ssh-keys
 ```
 
-Use `csc-ssh-keys` whenever the CSC SSH certificate expires and needs to be regenerated.
+Whenever the CSC SSH certificate expires, simply run:
+
+```bash
+csc-ssh-keys
+```
+
+to generate a new certificate.
