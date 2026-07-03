@@ -135,6 +135,9 @@ The resulting base path is:
             ├── SmartRedis/                        # $SMARTREDIS_DIR
             │   ├── build/
             │   └── install/
+            │       ├── include/
+            │       ├── lib64/
+            │       └── share/
             └── Python/                            # $PYTHON_ROOT
                 ├── base4SmartSim.yml
                 ├── extra4SmartSim.sh
@@ -617,7 +620,21 @@ find "$SMARTREDIS_DIR/install" \
 Inspect the library directory:
 
 ```bash
-ls -la "$SMARTREDIS_DIR/install/lib"
+# If lib64 does not exist on the target system, replace lib64 with lib.
+ls -la "$SMARTREDIS_DIR/install/lib64"
+```
+
+Verify the Fortran shared library:
+
+```bash
+test -f "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so" \
+    && echo "SmartRedis Fortran library installed successfully."
+```
+
+Inspect its dynamic dependencies:
+
+```bash
+ldd "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so"
 ```
 
 ---
@@ -641,7 +658,11 @@ export SMARTREDIS_DIR="$SMARTREDIS_DIR"
 export PATH="\$ENV_PREFIX/bin:\$PATH"
 
 # SmartRedis native libraries
-export LD_LIBRARY_PATH="\$SMARTREDIS_DIR/install/lib:\${LD_LIBRARY_PATH:-}"
+# If lib64 does not exist on the target system, replace lib64 with lib.
+export LD_LIBRARY_PATH="\$SMARTREDIS_DIR/install/lib64:\${LD_LIBRARY_PATH:-}"
+
+# SmartRedis CMake package files
+export CMAKE_PREFIX_PATH="\$SMARTREDIS_DIR/install:\${CMAKE_PREFIX_PATH:-}"
 
 # SmartSim database startup tolerance
 export SMARTSIM_DB_FILE_PARSE_TRIALS=600
@@ -675,6 +696,12 @@ Verify the SmartRedis native library path:
 
 ```bash
 echo "$LD_LIBRARY_PATH"
+```
+
+Verify the SmartRedis CMake package path:
+
+```bash
+echo "$CMAKE_PREFIX_PATH"
 ```
 
 For CPU-only execution:
@@ -823,7 +850,30 @@ head -n 40 "$PYTHON_ROOT/requirements.txt"
 Verify the native SmartRedis libraries:
 
 ```bash
-ls -la "$SMARTREDIS_DIR/install/lib"
+# If lib64 does not exist on the target system, replace lib64 with lib.
+ls -la "$SMARTREDIS_DIR/install/lib64"
+```
+
+Verify the Fortran shared library:
+
+```bash
+test -f "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so" \
+    && echo "SmartRedis Fortran library is available."
+```
+
+Inspect native linkage:
+
+```bash
+ldd "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so"
+```
+
+Verify the SmartRedis CMake package files:
+
+```bash
+find "$SMARTREDIS_DIR/install/share/cmake" \
+    -maxdepth 3 \
+    -type f \
+    | sort
 ```
 
 To validate the complete data path, run a JAX to ONNX to SmartRedis graph submission test on a compute node.
@@ -1240,7 +1290,10 @@ export ENV_PREFIX="$ENV_PREFIX"
 export SMARTREDIS_DIR="$SMARTREDIS_DIR"
 
 export PATH="\$ENV_PREFIX/bin:\$PATH"
-export LD_LIBRARY_PATH="\$SMARTREDIS_DIR/install/lib:\${LD_LIBRARY_PATH:-}"
+
+# If lib64 does not exist on the target system, replace lib64 with lib.
+export LD_LIBRARY_PATH="\$SMARTREDIS_DIR/install/lib64:\${LD_LIBRARY_PATH:-}"
+export CMAKE_PREFIX_PATH="\$SMARTREDIS_DIR/install:\${CMAKE_PREFIX_PATH:-}"
 
 export SMARTSIM_DB_FILE_PARSE_TRIALS=600
 export JAX_PLATFORMS="gpu"
@@ -1268,6 +1321,8 @@ import smartsim
 print('SmartSim environment is ready.')
 print(jax.devices())
 "
+
+ls -la "$SMARTREDIS_DIR/install/lib64"
 ```
 
 ---
@@ -1445,13 +1500,43 @@ uv pip check
 Inspect the native installation:
 
 ```bash
-ls -la "$SMARTREDIS_DIR/install/lib"
+# If lib64 does not exist on the target system, replace lib64 with lib.
+ls -la "$SMARTREDIS_DIR/install/lib64"
 ```
 
 Verify the runtime library path:
 
 ```bash
 echo "$LD_LIBRARY_PATH"
+```
+
+Reload the environment:
+
+```bash
+source "$BASE_SCRATCH/Python4SmartSim.sh"
+```
+
+Verify the Fortran shared library:
+
+```bash
+test -f "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so" \
+    && echo "SmartRedis Fortran library is available."
+```
+
+### SmartRedis Shared Library Dependencies Are Missing
+
+Inspect the Fortran shared library:
+
+```bash
+ldd "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so"
+```
+
+Any entry ending in `not found` indicates a missing compiler runtime or dependent shared library.
+
+Load the same GCC module used for the native build:
+
+```bash
+module load gcc/13.4.0
 ```
 
 Reload the environment:
@@ -1577,6 +1662,9 @@ The complete production architecture, Slurm templates, database placement strate
 * The final `uv pip check` must run only after the dependency restoration step.
 * Every `uv pip install` uses `--link-mode=copy` because the uv cache and Tykky target environment reside on different filesystems.
 * The SmartRedis Python client and SmartRedis native libraries serve different purposes.
+* The native SmartRedis libraries are expected under `install/lib64`.
+* If the target system installs native libraries under `install/lib`, replace `lib64` with `lib` in the loader and validation commands.
+* `CMAKE_PREFIX_PATH` points to the SmartRedis installation prefix for downstream CMake projects.
 * The native SmartRedis library must be rebuilt when its compiler, source, target system, or ABI changes.
 * `UV_CONCURRENT_DOWNLOADS=4` limits simultaneous external package downloads.
 * Missing PyTorch and TensorFlow backends in `smart validate` are intentional.
