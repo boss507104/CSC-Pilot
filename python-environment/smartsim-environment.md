@@ -551,7 +551,6 @@ Example for Roihu:
 ```bash
 module load gcc/13.4.0
 module load cmake/3.26.5
-module load git
 ```
 
 Example for Mahti:
