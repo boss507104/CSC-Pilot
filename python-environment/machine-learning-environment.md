@@ -301,6 +301,7 @@ set -e
 export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
+export UV_CONCURRENT_DOWNLOADS=4
 
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
@@ -657,6 +658,7 @@ export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
 
+export UV_CONCURRENT_DOWNLOADS=4
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
 # Install uv inside the active Tykky update environment
