@@ -391,14 +391,14 @@ srun --account=project_xxxxxxxx \
 
 ```bash
 ~/bin/vscode-cli-x64/code tunnel \
-    --name roihu-cpu-interactive \
+    --name roihu-cpu-int \
     --accept-server-license-terms
 ```
 
 **In local VS Code:**
 
 ```
-Remote Explorer → Tunnels → roihu-cpu-interactive
+Remote Explorer → Tunnels → roihu-cpu-int
 ```
 
 ### 7.2 GPU Session
@@ -430,14 +430,14 @@ sinteractive \
 
 ```bash
 ~/bin/vscode-cli-arm64/code tunnel \
-    --name roihu-gpu-interactive \
+    --name roihu-gpu-int \
     --accept-server-license-terms
 ```
 
 **In local VS Code:**
 
 ```
-Remote Explorer → Tunnels → roihu-gpu-interactive
+Remote Explorer → Tunnels → roihu-gpu-int
 ```
 
 ### 7.3 When finished
