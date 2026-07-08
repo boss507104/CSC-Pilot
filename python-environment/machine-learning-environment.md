@@ -67,12 +67,12 @@ export PYTHON_ROOT="$BASE_SCRATCH/Python"
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export TMP_BUILD_DIR="$BASE_SCRATCH/.tykky_runtime_$ENV_ARCH"
 
-# Initialise directories
-rm -rf "$ENV_PREFIX"
-rm -rf "$TMP_BUILD_DIR"
+# Initialise directories without removing existing environments
 mkdir -p "$PYTHON_ROOT/envs" "$TMP_BUILD_DIR"
 
 echo "x64 configuration loaded for $CSC_PROJECT."
+echo "ENV_PREFIX=$ENV_PREFIX"
+echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
 ```
 
 ### ARM64 Configuration for Roihu GPU Nodes
@@ -93,12 +93,12 @@ export PYTHON_ROOT="$BASE_SCRATCH/Python"
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export TMP_BUILD_DIR="$BASE_SCRATCH/.tykky_runtime_$ENV_ARCH"
 
-# Initialise directories
-rm -rf "$ENV_PREFIX"
-rm -rf "$TMP_BUILD_DIR"
+# Initialise directories without removing existing environments
 mkdir -p "$PYTHON_ROOT/envs" "$TMP_BUILD_DIR"
 
 echo "ARM64 configuration loaded for $CSC_PROJECT."
+echo "ENV_PREFIX=$ENV_PREFIX"
+echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
 ```
 
 The configuration variables represent:
