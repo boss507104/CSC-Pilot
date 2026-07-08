@@ -509,8 +509,15 @@ export PATH="$ENV_PREFIX/bin:$PATH"
 export JUPYTER_KERNEL_NAME="$ENV_NICKNAME-ml-$KERNEL_ARCH"
 export JUPYTER_KERNEL_DISPLAY="Python 3.12 ($ENV_NICKNAME ML $KERNEL_ARCH)"
 
-# Prefer the JAX GPU backend by default
-export JAX_PLATFORMS="cuda"
+# Select JAX backend
+case "$ENV_ARCH" in
+    x64)
+        export JAX_PLATFORMS="cpu"
+        ;;
+    arm64)
+        export JAX_PLATFORMS="cuda"
+        ;;
+esac
 EOF
 ```
 
