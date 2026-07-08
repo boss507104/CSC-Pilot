@@ -94,11 +94,7 @@ hostname
 From the Roihu GPU login node:
 
 ```bash
-srun --account=project_xxxxxxxx \
-    --partition=gpuinteractive \
-    --gres=gpu:gh200:1 \
-    --time=12:00:00 \
-    --pty bash
+sinteractive --account project_xxxxxxxx
 ```
 
 Wait until Slurm grants the allocation.
@@ -115,7 +111,7 @@ Verify that a GPU is visible:
 nvidia-smi
 ```
 
-> The `gpuinteractive` partition currently provides full GPUs until GPU slices are fully configured.
+> The `gpuinteractive` partition should be accessed through `sinteractive` from the `roihu-gpu` login node. The partition currently provides full GPUs until GPU slices are fully configured.
 
 ---
 
@@ -222,7 +218,7 @@ exit
 
 ## 6. Optional: Shell Function Shortcuts
 
-To simplify allocation and tunnel startup into a single command, create helper functions on Roihu.
+Create helper functions on Roihu to simplify the routine workflow.
 
 Create the directory for bash includes:
 
@@ -278,13 +274,9 @@ Create the GPU launcher script on `roihu-gpu`:
 
 ```bash
 cat > ~/.bashrc.d/vscode-interactive-gpu.sh << 'EOF'
-# Slurm GPU interactive allocation + VS Code tunnel launcher
+# Slurm GPU interactive allocation launcher
 vscode-interactive-gpu() {
-    srun --account=project_xxxxxxxx \
-        --partition=gpuinteractive \
-        --gres=gpu:gh200:1 \
-        --time=12:00:00 \
-        --pty ~/bin/code tunnel --accept-server-license-terms
+    sinteractive --account project_xxxxxxxx
 }
 EOF
 ```
@@ -307,10 +299,17 @@ Confirm the function is available:
 type vscode-interactive-gpu
 ```
 
-Once configured, allocate the GPU node and start the tunnel in one step:
+Once configured, allocate the GPU node:
 
 ```bash
 vscode-interactive-gpu
+```
+
+After entering the allocated GPU compute node, start the tunnel:
+
+```bash
+cd ~/bin
+./code tunnel --accept-server-license-terms
 ```
 
 > Ensure `~/.bashrc` sources files from `~/.bashrc.d/`. If it does not, add a snippet to `~/.bashrc` that loops over and sources scripts in that directory.
@@ -378,14 +377,10 @@ vscode-interactive-gpu
 **Or, using the manual method:**
 
 ```bash
-srun --account=project_xxxxxxxx \
-    --partition=gpuinteractive \
-    --gres=gpu:gh200:1 \
-    --time=12:00:00 \
-    --pty bash
+sinteractive --account project_xxxxxxxx
 ```
 
-**On the allocated GPU compute node, if using the manual method:**
+**On the allocated GPU compute node:**
 
 ```bash
 cd ~/bin
@@ -424,6 +419,8 @@ exit
 - The tunnel stops when the Slurm allocation ends.
 - The maximum CPU interactive allocation used in this guide is 32 CPU cores and 62 GiB of RAM.
 - The maximum GPU interactive time used in this guide is 12 hours.
+- The `gpuinteractive` partition should be accessed through `sinteractive` from the `roihu-gpu` login node.
 - The `gpuinteractive` partition currently provides full GPUs until GPU slices are fully configured.
 - Use batch jobs for long-running production workloads.
-- The `vscode-interactive-cpu` and `vscode-interactive-gpu` shell functions combine Slurm allocation and tunnel startup into a single command for convenience.
+- The `vscode-interactive-cpu` shell function combines CPU allocation and tunnel startup into a single command.
+- The `vscode-interactive-gpu` shell function starts a GPU interactive allocation through `sinteractive`; start the tunnel manually after entering the allocated GPU node.
