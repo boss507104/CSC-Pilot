@@ -28,7 +28,9 @@ On the local workstation, renew the CSC SSH certificate:
 csc-ssh-keys
 ```
 
-Connect to Roihu:
+### 1.1 Install the x64 VS Code CLI for Roihu CPU
+
+Connect to the Roihu CPU login node:
 
 ```bash
 ssh roihu-cpu
@@ -37,11 +39,11 @@ ssh roihu-cpu
 Create the installation directory:
 
 ```bash
-mkdir -p ~/bin
-cd ~/bin
+mkdir -p ~/bin/vscode-cli-x64
+cd ~/bin/vscode-cli-x64
 ```
 
-Download the stable VS Code CLI:
+Download the stable x64 VS Code CLI:
 
 ```bash
 curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' \
@@ -54,13 +56,35 @@ Extract the archive:
 tar -xf vscode_cli.tar.gz
 ```
 
-Verify the installation:
+### 1.2 Install the ARM64 VS Code CLI for Roihu GPU
+
+Connect to the Roihu GPU login node:
 
 ```bash
-~/bin/code --version
+ssh roihu-gpu
 ```
 
-> This installation only needs to be completed once. If `~/bin` is shared between Roihu login environments, the same installation can be used from both `roihu-cpu` and `roihu-gpu`.
+Create the installation directory:
+
+```bash
+mkdir -p ~/bin/vscode-cli-arm64
+cd ~/bin/vscode-cli-arm64
+```
+
+Download the stable ARM64 VS Code CLI:
+
+```bash
+curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-arm64' \
+    --output vscode_cli.tar.gz
+```
+
+Extract the archive:
+
+```bash
+tar -xf vscode_cli.tar.gz
+```
+
+> Roihu CPU nodes use the x64 VS Code CLI. Roihu GPU nodes use the ARM64 VS Code CLI.
 
 ---
 
@@ -94,7 +118,10 @@ hostname
 From the Roihu GPU login node:
 
 ```bash
-sinteractive --account project_xxxxxxxx
+sinteractive \
+    --account project_xxxxxxxx \
+    --gpu \
+    --time 09:00:00
 ```
 
 Wait until Slurm grants the allocation.
@@ -117,11 +144,16 @@ nvidia-smi
 
 ## 3. Start the VS Code Tunnel
 
-From the allocated compute node:
+From the allocated CPU compute node:
 
 ```bash
-cd ~/bin
-./code tunnel --accept-server-license-terms
+~/bin/vscode-cli-x64/code tunnel --accept-server-license-terms
+```
+
+From the allocated GPU compute node:
+
+```bash
+~/bin/vscode-cli-arm64/code tunnel --accept-server-license-terms
 ```
 
 During the first run:
@@ -239,7 +271,7 @@ vscode-interactive-cpu() {
         --cpus-per-task=32 \
         --mem=62G \
         --time=09:00:00 \
-        --pty ~/bin/code tunnel --accept-server-license-terms
+        --pty ~/bin/vscode-cli-x64/code tunnel --accept-server-license-terms
 }
 EOF
 ```
@@ -274,9 +306,13 @@ Create the GPU launcher script on `roihu-gpu`:
 
 ```bash
 cat > ~/.bashrc.d/vscode-interactive-gpu.sh << 'EOF'
-# Slurm GPU interactive allocation launcher
+# Slurm GPU interactive allocation + VS Code tunnel launcher
 vscode-interactive-gpu() {
-    sinteractive --account project_xxxxxxxx
+    sinteractive \
+        --account project_xxxxxxxx \
+        --gpu \
+        --time 09:00:00 \
+        ~/bin/vscode-cli-arm64/code tunnel --accept-server-license-terms
 }
 EOF
 ```
@@ -299,17 +335,10 @@ Confirm the function is available:
 type vscode-interactive-gpu
 ```
 
-Once configured, allocate the GPU node:
+Once configured, allocate the GPU node and start the tunnel in one step:
 
 ```bash
 vscode-interactive-gpu
-```
-
-After entering the allocated GPU compute node, start the tunnel:
-
-```bash
-cd ~/bin
-./code tunnel --accept-server-license-terms
 ```
 
 > Ensure `~/.bashrc` sources files from `~/.bashrc.d/`. If it does not, add a snippet to `~/.bashrc` that loops over and sources scripts in that directory.
@@ -349,8 +378,7 @@ srun --account=project_xxxxxxxx \
 **On the allocated CPU compute node, if using the manual method:**
 
 ```bash
-cd ~/bin
-./code tunnel --accept-server-license-terms
+~/bin/vscode-cli-x64/code tunnel --accept-server-license-terms
 ```
 
 **In local VS Code:**
@@ -377,14 +405,16 @@ vscode-interactive-gpu
 **Or, using the manual method:**
 
 ```bash
-sinteractive --account project_xxxxxxxx
+sinteractive \
+    --account project_xxxxxxxx \
+    --gpu \
+    --time 09:00:00
 ```
 
-**On the allocated GPU compute node:**
+**On the allocated GPU compute node, if using the manual method:**
 
 ```bash
-cd ~/bin
-./code tunnel --accept-server-license-terms
+~/bin/vscode-cli-arm64/code tunnel --accept-server-license-terms
 ```
 
 **In local VS Code:**
@@ -415,6 +445,8 @@ exit
 - Start the VS Code Tunnel only after entering the Slurm interactive node.
 - Use `roihu-cpu` for CPU interactive sessions.
 - Use `roihu-gpu` for GPU interactive sessions.
+- Roihu CPU nodes require the x64 VS Code CLI.
+- Roihu GPU nodes require the ARM64 VS Code CLI.
 - Keep the original SSH terminal open while using VS Code.
 - The tunnel stops when the Slurm allocation ends.
 - The maximum CPU interactive allocation used in this guide is 32 CPU cores and 62 GiB of RAM.
@@ -423,4 +455,4 @@ exit
 - The `gpuinteractive` partition currently provides full GPUs until GPU slices are fully configured.
 - Use batch jobs for long-running production workloads.
 - The `vscode-interactive-cpu` shell function combines CPU allocation and tunnel startup into a single command.
-- The `vscode-interactive-gpu` shell function starts a GPU interactive allocation through `sinteractive`; start the tunnel manually after entering the allocated GPU node.
+- The `vscode-interactive-gpu` shell function combines GPU allocation and tunnel startup into a single command.
