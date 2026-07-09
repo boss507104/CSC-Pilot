@@ -857,6 +857,10 @@ export SMARTSIM_DB_FILE_PARSE_TRIALS=600
 export JUPYTER_KERNEL_NAME="$ENV_NICKNAME-smartsim-$KERNEL_ARCH"
 export JUPYTER_KERNEL_DISPLAY="Python 3.11 ($ENV_NICKNAME SmartSim $KERNEL_ARCH)"
 
+# Architecture-specific Jupyter user data directory
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share/$KERNEL_ARCH}"
+export JUPYTER_KERNEL_DIR="$XDG_DATA_HOME/jupyter/kernels/$JUPYTER_KERNEL_NAME"
+
 # Select JAX backend
 case "$ENV_ARCH" in
     x64)
@@ -921,16 +925,28 @@ Load the environment:
 source "$BASE_SCRATCH/Python4SmartSim.sh"
 ```
 
-Create the kernel directory:
+Confirm the selected architecture and kernel metadata:
 
 ```bash
-mkdir -p "$HOME/.local/share/jupyter/kernels/$JUPYTER_KERNEL_NAME"
+echo "ENV_ARCH=$ENV_ARCH"
+echo "KERNEL_ARCH=$KERNEL_ARCH"
+echo "ENV_PREFIX=$ENV_PREFIX"
+echo "JUPYTER_KERNEL_NAME=$JUPYTER_KERNEL_NAME"
+echo "JUPYTER_KERNEL_DISPLAY=$JUPYTER_KERNEL_DISPLAY"
+echo "XDG_DATA_HOME=$XDG_DATA_HOME"
+echo "JUPYTER_KERNEL_DIR=$JUPYTER_KERNEL_DIR"
+```
+
+Create the architecture-specific Jupyter kernel directory:
+
+```bash
+mkdir -p "$JUPYTER_KERNEL_DIR"
 ```
 
 Create `kernel.json`:
 
 ```bash
-cat <<EOF > "$HOME/.local/share/jupyter/kernels/$JUPYTER_KERNEL_NAME/kernel.json"
+cat <<EOF > "$JUPYTER_KERNEL_DIR/kernel.json"
 {
   "argv": [
     "$ENV_PREFIX/bin/python",
@@ -951,12 +967,7 @@ EOF
 Confirm the registration:
 
 ```bash
-echo "Jupyter kernel '$JUPYTER_KERNEL_NAME' has been registered."
-```
-
-List the available kernels:
-
-```bash
+cat "$JUPYTER_KERNEL_DIR/kernel.json"
 jupyter kernelspec list
 ```
 
@@ -964,6 +975,12 @@ Remove an obsolete kernel:
 
 ```bash
 jupyter kernelspec uninstall -f <kernel_name>
+```
+
+After registering the kernel, reload the VS Code remote window:
+
+```text
+Command Palette → Developer: Reload Window
 ```
 
 ---
