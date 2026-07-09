@@ -519,10 +519,17 @@ platform_file = smartsim_root / "_core" / "_install" / "platform.py"
 
 text = platform_file.read_text()
 
-if "'aarch64'" not in text and '"aarch64"' not in text:
+# Remove the previous wrong patch if it exists
+text = text.replace('    AARCH64 = "aarch64"\n', '')
+
+# Map Linux aarch64 to SmartSim's existing arm64 architecture name
+if 'if string == "aarch64":' not in text:
     text = text.replace(
-        '    ARM64 = "arm64"\n',
-        '    ARM64 = "arm64"\n    AARCH64 = "aarch64"\n',
+        '        return cls(string)\n',
+        '        if string == "aarch64":\n'
+        '            string = "arm64"\n'
+        '        return cls(string)\n',
+        1,
     )
 
 platform_file.write_text(text)
@@ -1306,10 +1313,17 @@ platform_file = smartsim_root / "_core" / "_install" / "platform.py"
 
 text = platform_file.read_text()
 
-if "'aarch64'" not in text and '"aarch64"' not in text:
+# Remove the previous wrong patch if it exists
+text = text.replace('    AARCH64 = "aarch64"\n', '')
+
+# Map Linux aarch64 to SmartSim's existing arm64 architecture name
+if 'if string == "aarch64":' not in text:
     text = text.replace(
-        '    ARM64 = "arm64"\n',
-        '    ARM64 = "arm64"\n    AARCH64 = "aarch64"\n',
+        '        return cls(string)\n',
+        '        if string == "aarch64":\n'
+        '            string = "arm64"\n'
+        '        return cls(string)\n',
+        1,
     )
 
 platform_file.write_text(text)
