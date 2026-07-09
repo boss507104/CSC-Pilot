@@ -509,6 +509,26 @@ uv pip install \
     --link-mode=copy \
     smartsim==0.8.0
 
+# Patch SmartSim architecture detection for Roihu ARM64 nodes
+python - <<'PY'
+from pathlib import Path
+import smartsim
+
+smartsim_root = Path(smartsim.__file__).resolve().parent
+platform_file = smartsim_root / "_core" / "_install" / "platform.py"
+
+text = platform_file.read_text()
+
+if "'aarch64'" not in text and '"aarch64"' not in text:
+    text = text.replace(
+        '    ARM64 = "arm64"\n',
+        '    ARM64 = "arm64"\n    AARCH64 = "aarch64"\n',
+    )
+
+platform_file.write_text(text)
+print(f"Patched SmartSim platform file: {platform_file}")
+PY
+
 # Build the SmartSim database dependencies without unused ML backends
 export USE_SYSTEMD=no
 
@@ -1275,6 +1295,26 @@ export LDFLAGS="$OLD_LDFLAGS"
 uv pip install \
     --link-mode=copy \
     smartsim==0.8.0
+
+# Patch SmartSim architecture detection for Roihu ARM64 nodes
+python - <<'PY'
+from pathlib import Path
+import smartsim
+
+smartsim_root = Path(smartsim.__file__).resolve().parent
+platform_file = smartsim_root / "_core" / "_install" / "platform.py"
+
+text = platform_file.read_text()
+
+if "'aarch64'" not in text and '"aarch64"' not in text:
+    text = text.replace(
+        '    ARM64 = "arm64"\n',
+        '    ARM64 = "arm64"\n    AARCH64 = "aarch64"\n',
+    )
+
+platform_file.write_text(text)
+print(f"Patched SmartSim platform file: {platform_file}")
+PY
 
 # Rebuild the SmartSim database dependencies
 export USE_SYSTEMD=no
