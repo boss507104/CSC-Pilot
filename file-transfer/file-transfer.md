@@ -10,8 +10,8 @@ Mahti uses a symbolic link for the `.ssh` directory mapping to the persistent sc
 
 ```bash
 # Verify symbolic link and restrict permissions
-chmod 700 /scratch/$CSC_PROJECT/$CSC_USER/SSH
-chmod 600 /scratch/$CSC_PROJECT/$CSC_USER/SSH/id_ed25519
+chmod 700 /scratch/$CSC_PROJECT/$CSC_USER/System/.ssh
+chmod 600 /scratch/$CSC_PROJECT/$CSC_USER/System/.ssh/id_ed25519
 
 ```
 
