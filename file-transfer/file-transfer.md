@@ -19,7 +19,7 @@ To enable the short-term certificate signing mechanism on the Mahti login node, 
 
 ```bash
 # Append persistent shortcut to bash profile
-echo "alias csc-ssh-keys='python3.9 ~/certificate-helper-tool/csc_cert.py -u $CSC_USER_ID /scratch/$CSC_PROJECT/$CSC_USER/SSH/id_ed25519.pub'" >> ~/.bashrc
+echo "alias csc-ssh-keys='python3.9 ~/certificate-helper-tool/csc_cert.py -u $CSC_USER_ID /scratch/$CSC_PROJECT/$CSC_USER/System/.ssh/id_ed25519.pub'" >> ~/.bashrc
 source ~/.bashrc
 
 ```
@@ -56,7 +56,7 @@ Execute the `rsync` transaction by explicitly injecting the certified cryptograp
 
 ```bash
 rsync -avhi --progress \
-  -e "ssh -i /scratch/$CSC_PROJECT/$CSC_USER/SSH/id_ed25519 -o StrictHostKeyChecking=no" \
+  -e "ssh -i /scratch/$CSC_PROJECT/$CSC_USER/System/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
   /scratch/$CSC_PROJECT/$CSC_USER/$DATASET_DIR/ \
   $CSC_USER_ID@roihu-cpu.csc.fi:/scratch/$CSC_PROJECT/$CSC_USER/$DATASET_DIR/
 
