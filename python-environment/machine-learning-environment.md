@@ -300,6 +300,7 @@ set -e
 export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
+export UV_LINK_MODE=copy
 export UV_CONCURRENT_DOWNLOADS=4
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
@@ -373,7 +374,7 @@ srun --account="$CSC_PROJECT" \
     --nodes=1 \
     --ntasks=1 \
     --cpus-per-task=16 \
-    --time=03:00:00 \
+    --time=01:30:00 \
     --pty bash
 ```
 
@@ -384,7 +385,7 @@ sinteractive \
     --account "$CSC_PROJECT" \
     --gpu \
     --cores 36 \
-    --time 03:00:00
+    --time 01:30:00
 ```
 
 If the environment variables from Section 1 aren't inherited into the new shell, re-run the matching Global Configuration block after the allocation starts.
@@ -624,6 +625,7 @@ set -e
 export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
+export UV_LINK_MODE=copy
 export UV_CONCURRENT_DOWNLOADS=4
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
