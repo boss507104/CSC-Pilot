@@ -531,10 +531,25 @@ mkdir -p "$JUPYTER_KERNEL_DIR"
 
 cat <<EOF > "$JUPYTER_KERNEL_DIR/kernel.json"
 {
-  "argv": ["$ENV_PREFIX/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+  "argv": [
+    "$ENV_PREFIX/bin/python",
+    "-m",
+    "ipykernel_launcher",
+    "-f",
+    "{connection_file}"
+  ],
   "display_name": "$JUPYTER_KERNEL_DISPLAY",
   "language": "python",
-  "metadata": { "debugger": true }
+  "metadata": {
+    "debugger": true
+  },
+  "env": {
+    "JAX_PLATFORMS": "$JAX_PLATFORMS",
+    "PYTHON_JULIAPKG_PROJECT": "$PYTHON_JULIAPKG_PROJECT",
+    "JULIA_DEPOT_PATH": "$JULIA_DEPOT_PATH",
+    "PYTHON_JULIAPKG_OFFLINE": "yes",
+    "PYTHON_JULIACALL_THREADS": "auto"
+  }
 }
 EOF
 
