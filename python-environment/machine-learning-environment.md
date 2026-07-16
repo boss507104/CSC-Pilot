@@ -758,11 +758,6 @@ if [ "$#" -eq 0 ]; then
     exit 1
 fi
 
-if [ -z "${SLURM_JOB_ID:-}" ]; then
-    echo "Run ml-update inside a matching Slurm compute-node allocation."
-    exit 1
-fi
-
 # --- USER CONFIGURATION START ---
 export CSC_PROJECT="project_xxxxxxx"
 export PROJECT_USER_DIR="Harry"
