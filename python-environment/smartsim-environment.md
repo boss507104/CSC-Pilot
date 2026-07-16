@@ -55,6 +55,9 @@ This configuration is part of the [CSC Environment Helpers Framework](https://gi
 ## Build Flow
 
 ```text
+Set identity once (Section 0) — shared with the ML stack if you have one
+  |
+  v
 Choose target architecture
   |
   +-- x64  (Roihu CPU / Puhti / Mahti)
@@ -72,21 +75,60 @@ Skip the `arm64` track entirely if you never use Roihu GPU nodes.
 
 ---
 
-## 1. Global Configuration
+## 0. One-Time Identity Configuration
 
-Run **one** of these blocks depending on the node you're on.
+Every script in this guide needs the same three values: your CSC project ID, your directory under that project, and the environment nickname. Rather than hardcoding these into every generated script, set them **once** in a small file under `$HOME`, and have everything else `source` it.
 
-> `Harry` and `Dumbledore` are fictional placeholders used throughout this doc. Replace them — and `project_xxxxxxx` — with your real values **everywhere they appear**, including inside `Python4SmartSim.sh` and `smartsim-update`.
+> `Harry`, `Dumbledore`, and `project_xxxxxxx` below are fictional placeholders. Fill in your real values **only here** — Global Configuration (Section 1), the loader (Section 7), and `smartsim-update` (Section 11) all source this one file, so nothing downstream needs manual editing.
 
-### 1.1 x64 (Roihu CPU / Puhti / Mahti)
+**If you already created this file for the ML stack, skip straight to the "Verify" step below** — the SmartSim and ML stacks share the same identity file. `CSC_PROJECT`, `PROJECT_USER_DIR`, and `ENV_NICKNAME` don't need to differ between the two; the `PythonML/` vs `PythonSmartSim/` split, and the differing Python versions baked into each environment's directory name, already keep the two stacks fully separate.
 
 ```bash
+mkdir -p "$HOME/.config/csc-hpc"
+
+cat <<'EOF' > "$HOME/.config/csc-hpc/identity.sh"
 # --- USER CONFIGURATION START ---
 export CSC_PROJECT="project_xxxxxxx"        # Your CSC project ID
 export PROJECT_USER_DIR="Harry"             # Your directory under the CSC project
 export ENV_NICKNAME="Dumbledore"            # Desired environment name
-export ENV_ARCH="x64"
 # --- USER CONFIGURATION END ---
+EOF
+
+chmod 600 "$HOME/.config/csc-hpc/identity.sh"
+```
+
+Edit it once with your real values:
+
+```bash
+nano "$HOME/.config/csc-hpc/identity.sh"
+```
+
+Verify:
+
+```bash
+source "$HOME/.config/csc-hpc/identity.sh"
+echo "CSC_PROJECT=$CSC_PROJECT"
+echo "PROJECT_USER_DIR=$PROJECT_USER_DIR"
+echo "ENV_NICKNAME=$ENV_NICKNAME"
+```
+
+This file lives directly under `$HOME`, not on scratch — consistent with the "Home Directory: lightweight config files only" principle.
+
+`ENV_ARCH` is deliberately **not** part of this file — it's a per-build choice you make explicitly in Global Configuration (Section 1), and it's auto-detected from `uname -m` everywhere else (the loader, `smartsim-update`). Baking a fixed architecture into identity would fight with that auto-detection the moment you use both a CPU and a GPU node.
+
+**If you already have an old-style `Python4SmartSim.sh` or `smartsim-update` with hardcoded values:** regenerating them from Section 7 / Section 11 after creating this identity file is a cheap, instant rewrite of a small script — it does **not** require rebuilding the Tykky container or the native SmartRedis library.
+
+---
+
+## 1. Global Configuration
+
+Run **one** of these blocks depending on the node you're on. Both blocks source the identity file from Section 0 — the only line that differs between them is `ENV_ARCH`.
+
+### 1.1 x64 (Roihu CPU / Puhti / Mahti)
+
+```bash
+source "$HOME/.config/csc-hpc/identity.sh"
+export ENV_ARCH="x64"
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -107,12 +149,8 @@ echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
 ### 1.2 arm64 (Roihu GPU)
 
 ```bash
-# --- USER CONFIGURATION START ---
-export CSC_PROJECT="project_xxxxxxx"
-export PROJECT_USER_DIR="Harry"
-export ENV_NICKNAME="Dumbledore"
+source "$HOME/.config/csc-hpc/identity.sh"
 export ENV_ARCH="arm64"
-# --- USER CONFIGURATION END ---
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -193,7 +231,7 @@ python --version
 
 If `python --version` fails or `$ENV_PREFIX` doesn't exist, don't debug in place — fall back to a full rebuild (Section 12) at the new path rather than patching a half-moved container.
 
-You do **not** need to touch `.tykky_runtime_smartsim_*` — it's recreated fresh by the build/update scripts on every run.
+You do **not** need to touch `.tykky_runtime_smartsim_*` — it's recreated fresh by the build/update scripts on every run. This directory migration is independent of Section 0's identity file — you only need to do it once, regardless of whether you've adopted the shared identity file yet.
 
 ---
 
@@ -508,7 +546,7 @@ sinteractive \
     --time 01:30:00
 ```
 
-If the environment variables from Section 1 aren't inherited into the new shell, re-run the matching Global Configuration block after the allocation starts.
+If the environment variables from Section 1 aren't inherited into the new shell, re-run the matching Global Configuration block after the allocation starts (it will re-source your identity file automatically).
 
 ---
 
@@ -630,9 +668,13 @@ ldd "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so"
 cat <<'EOF' > "$BASE_SCRATCH/Python4SmartSim.sh"
 #!/bin/bash
 
-export CSC_PROJECT="project_xxxxxxx"
-export PROJECT_USER_DIR="Harry"
-export ENV_NICKNAME="Dumbledore"
+if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
+    echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
+    echo "Run Section 0 of the SmartSim Environment Configuration guide first."
+    return 1
+fi
+
+source "$HOME/.config/csc-hpc/identity.sh"
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -683,9 +725,11 @@ EOF
 chmod +x "$BASE_SCRATCH/Python4SmartSim.sh"
 ```
 
-Replace `project_xxxxxxx`, `Harry`, `Dumbledore`, and the `gcc/...` module inside the file with your real values, then load it:
+Edit the `gcc/...` module line inside the file to match the compiler used for your native SmartRedis build, then load it — no other manual editing needed, since the script sources your identity file from Section 0:
 
 ```bash
+nano "$BASE_SCRATCH/Python4SmartSim.sh"   # only if the GCC module needs changing
+
 source "$BASE_SCRATCH/Python4SmartSim.sh"
 
 echo "$PYTHON_ROOT"; echo "$ENV_PREFIX"; echo "$SMARTREDIS_DIR"
@@ -1012,11 +1056,13 @@ if [ "$#" -eq 0 ]; then
     exit 1
 fi
 
-# --- USER CONFIGURATION START ---
-export CSC_PROJECT="project_xxxxxxx"
-export PROJECT_USER_DIR="Harry"
-export ENV_NICKNAME="Dumbledore"
-# --- USER CONFIGURATION END ---
+if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
+    echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
+    echo "Run Section 0 of the SmartSim Environment Configuration guide first."
+    exit 1
+fi
+
+source "$HOME/.config/csc-hpc/identity.sh"
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -1257,6 +1303,8 @@ then restore packages: `uv pip install --link-mode=copy --requirements "$PYTHON_
 
 **`ENV_PREFIX not found` right after migrating from the old layout** — you probably sourced `Python4SmartSim.sh` before finishing Section 1.3's `mv` step, or moved only part of `envs/`. Re-check `$PYTHON_ROOT/envs/` contains the full environment directory, then re-source the loader.
 
+**Loader or `smartsim-update` exits immediately with "Identity file not found"** — `$HOME/.config/csc-hpc/identity.sh` doesn't exist yet, or hasn't been filled in. Go back to Section 0, create/edit it, then re-source the loader or re-run `smartsim-update`. If you already set this up for the ML stack, make sure you haven't accidentally deleted or moved that file.
+
 ---
 
 ## 14. SmartSim Deployment Track
@@ -1279,7 +1327,8 @@ RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is **n
 ## Notes
 
 * Python 3.11, built separately per architecture (x64, arm64) — never mix containers across architectures.
-* `Harry` / `Dumbledore` / `project_xxxxxxx` are fictional placeholders — replace consistently in **every** script, including `Python4SmartSim.sh` and `smartsim-update`.
+* `Harry` / `Dumbledore` / `project_xxxxxxx` are fictional placeholders — set them **exactly once** in `$HOME/.config/csc-hpc/identity.sh` (Section 0). Every other script (Global Configuration, `Python4SmartSim.sh`, `smartsim-update`) sources that file automatically, so there's nothing left to edit by hand downstream. This identity file is shared with the ML stack, if you have one.
+* `ENV_ARCH` is intentionally excluded from the identity file — it's chosen explicitly per build in Global Configuration, and auto-detected via `uname -m` in the loader and `smartsim-update`.
 * `PROJECT_USER_DIR` is not necessarily your CSC login username.
 * `PYTHON_BASE` (`$BASE_SCRATCH/Python`) is the shared parent for both the SmartSim and ML stacks; `PYTHON_ROOT` (`$PYTHON_BASE/PythonSmartSim`) is the SmartSim-specific subtree — keep `requirements.in`, `envs/`, and update scripts strictly under `PYTHON_ROOT`. **Do not merge with the ML stack** (`PythonML/`) — NumPy/protobuf pins conflict.
 * `requirements.in` = direct deps + constraints, *not* SmartSim itself; `requirements-$ENV_ARCH.txt` = installed-state snapshot excluding SmartSim/SmartRedis, not a separately compiled lockfile.
@@ -1297,3 +1346,4 @@ RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is **n
 * Use compute nodes for installation, SmartSim database compilation, SmartRedis native compilation, and computational workloads; avoid large installs/builds on login nodes (see Section 4's download tip for the one exception).
 * Prefer a full rebuild over repeated incremental updates once the dependency set changes substantially.
 * If migrating from the old flat `Python/` layout, do the one-time move in Section 1.3 before sourcing the loader — do not run both layouts in parallel.
+* The identity file (Section 0) and the directory-layout migration (Section 1.3) are independent — you can adopt either one without the other.
