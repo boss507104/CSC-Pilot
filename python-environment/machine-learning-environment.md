@@ -39,6 +39,9 @@ PySR uses `juliacall`. Because Tykky's `--post-install` script runs *inside* the
 ## Build Flow
 
 ```text
+Set identity once (Section 0)
+  |
+  v
 Choose target architecture
   |
   +-- x64  (Roihu CPU / Puhti / Mahti)  --> Global Config (x64)  --> build PythonML/envs/$ENV_NICKNAME-3.12-x64
@@ -53,21 +56,60 @@ Skip the `arm64` track entirely if you never use Roihu GPU nodes.
 
 ---
 
-## 1. Global Configuration
+## 0. One-Time Identity Configuration
 
-Run **one** of these blocks depending on the node you're on. Everything below (`$PYTHON_ROOT`, `$ENV_PREFIX`, etc.) depends on it.
+Every script in this guide needs the same three values: your CSC project ID, your directory under that project, and the environment nickname. Rather than hardcoding these into every generated script (which means re-editing several files whenever they change), set them **once** in a small file under `$HOME`, and have everything else `source` it.
 
-> `Harry` and `Dumbledore` are fictional placeholders used throughout this doc. Replace them — and `project_xxxxxxx` — with your real values **everywhere they appear**, including inside `Python4ML.sh` and `ml-update`.
-
-### 1.1 x64 (Roihu CPU / Puhti / Mahti)
+> `Harry`, `Dumbledore`, and `project_xxxxxxx` below are fictional placeholders. Fill in your real values **only here** — Global Configuration (Section 1), the loader (Section 6), and `ml-update` (Section 10) all source this one file, so nothing downstream needs manual editing.
 
 ```bash
+mkdir -p "$HOME/.config/csc-hpc"
+
+cat <<'EOF' > "$HOME/.config/csc-hpc/identity.sh"
 # --- USER CONFIGURATION START ---
 export CSC_PROJECT="project_xxxxxxx"        # Your CSC project ID
 export PROJECT_USER_DIR="Harry"             # Your directory under the CSC project
 export ENV_NICKNAME="Dumbledore"            # Desired environment name
-export ENV_ARCH="x64"
 # --- USER CONFIGURATION END ---
+EOF
+
+chmod 600 "$HOME/.config/csc-hpc/identity.sh"
+```
+
+Edit it once with your real values:
+
+```bash
+nano "$HOME/.config/csc-hpc/identity.sh"
+```
+
+Verify:
+
+```bash
+source "$HOME/.config/csc-hpc/identity.sh"
+echo "CSC_PROJECT=$CSC_PROJECT"
+echo "PROJECT_USER_DIR=$PROJECT_USER_DIR"
+echo "ENV_NICKNAME=$ENV_NICKNAME"
+```
+
+This file lives directly under `$HOME`, not on scratch — consistent with the "Home Directory: lightweight config files only" principle. It's a few lines of text, not a build artefact.
+
+`ENV_ARCH` is deliberately **not** part of this file — it's a per-build choice you make explicitly in Global Configuration (Section 1), and it's auto-detected from `uname -m` everywhere else (the loader, `ml-update`). Baking a fixed architecture into identity would fight with that auto-detection the moment you use both a CPU and a GPU node.
+
+If you're also using the SmartSim stack (`Python4SmartSim.sh` / `smartsim-update`), the same identity file can be reused there too — `CSC_PROJECT`, `PROJECT_USER_DIR`, and `ENV_NICKNAME` don't need to differ between stacks; the ML/SmartSim separation already happens via `PythonML/` vs `PythonSmartSim/` and the differing Python versions baked into each env directory name.
+
+**If you already have an old-style `Python4ML.sh` or `ml-update` with hardcoded values:** regenerating them from Section 6 / Section 10 after creating this identity file is a cheap, instant rewrite of a small script — it does **not** require rebuilding the Tykky container itself.
+
+---
+
+## 1. Global Configuration
+
+Run **one** of these blocks depending on the node you're on. Both blocks source the identity file from Section 0 — the only line that differs between them is `ENV_ARCH`.
+
+### 1.1 x64 (Roihu CPU / Puhti / Mahti)
+
+```bash
+source "$HOME/.config/csc-hpc/identity.sh"
+export ENV_ARCH="x64"
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -86,12 +128,8 @@ echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
 ### 1.2 arm64 (Roihu GPU)
 
 ```bash
-# --- USER CONFIGURATION START ---
-export CSC_PROJECT="project_xxxxxxx"
-export PROJECT_USER_DIR="Harry"
-export ENV_NICKNAME="Dumbledore"
+source "$HOME/.config/csc-hpc/identity.sh"
 export ENV_ARCH="arm64"
-# --- USER CONFIGURATION END ---
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -166,7 +204,7 @@ python --version
 
 If `which python` doesn't resolve or fails, don't debug in place — fall back to a full rebuild (Section 11) at the new path rather than patching a half-moved container.
 
-You do **not** need to touch `.tykky_runtime_*`, `.julia_env_runtime_*`, or `.julia_depot_runtime_*` — those live outside `PythonML/` and are recreated fresh by the loader on every `source`.
+You do **not** need to touch `.tykky_runtime_*`, `.julia_env_runtime_*`, or `.julia_depot_runtime_*` — those live outside `PythonML/` and are recreated fresh by the loader on every `source`. This directory migration is independent of Section 0's identity file — you only need to do it once, regardless of whether you've adopted the shared identity file yet.
 
 ---
 
@@ -442,7 +480,7 @@ sinteractive \
     --time 01:30:00
 ```
 
-If the environment variables from Section 1 aren't inherited into the new shell, re-run the matching Global Configuration block after the allocation starts.
+If the environment variables from Section 1 aren't inherited into the new shell, re-run the matching Global Configuration block after the allocation starts (it will re-source your identity file automatically).
 
 ---
 
@@ -484,9 +522,13 @@ Build the other architecture separately, using its own Global Configuration (Sec
 cat <<'EOF' > "$BASE_SCRATCH/Python4ML.sh"
 #!/bin/bash
 
-export CSC_PROJECT="project_xxxxxxx"
-export PROJECT_USER_DIR="Harry"
-export ENV_NICKNAME="Dumbledore"
+if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
+    echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
+    echo "Run Section 0 of the ML Environment Configuration guide first."
+    return 1
+fi
+
+source "$HOME/.config/csc-hpc/identity.sh"
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -567,7 +609,7 @@ EOF
 chmod +x "$BASE_SCRATCH/Python4ML.sh"
 ```
 
-Replace `project_xxxxxxx`, `Harry`, `Dumbledore` inside the file with your real values, then load it:
+Load it — no manual editing needed, since the script sources your identity file from Section 0:
 
 ```bash
 source "$BASE_SCRATCH/Python4ML.sh"
@@ -807,11 +849,13 @@ if [ "$#" -eq 0 ]; then
     exit 1
 fi
 
-# --- USER CONFIGURATION START ---
-export CSC_PROJECT="project_xxxxxxx"
-export PROJECT_USER_DIR="Harry"
-export ENV_NICKNAME="Dumbledore"
-# --- USER CONFIGURATION END ---
+if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
+    echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
+    echo "Run Section 0 of the ML Environment Configuration guide first."
+    exit 1
+fi
+
+source "$HOME/.config/csc-hpc/identity.sh"
 
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
@@ -977,12 +1021,15 @@ Then rebuild per Section 11 on the matching architecture.
 
 **`ENV_PREFIX not found` right after migrating from the old layout** — you probably sourced `Python4ML.sh` before finishing Section 1.3's `mv` step, or moved only part of `envs/`. Re-check `$PYTHON_ROOT/envs/` contains the full environment directory, then re-source the loader.
 
+**Loader or `ml-update` exits immediately with "Identity file not found"** — `$HOME/.config/csc-hpc/identity.sh` doesn't exist yet, or hasn't been filled in. Go back to Section 0, create/edit it, then re-source the loader or re-run `ml-update`.
+
 ---
 
 ## Notes
 
 * Python 3.12, built separately per architecture (x64, arm64) — never mix containers across architectures.
-* `Harry` / `Dumbledore` / `project_xxxxxxx` are fictional placeholders — replace consistently in **every** script, including `Python4ML.sh` and `ml-update`.
+* `Harry` / `Dumbledore` / `project_xxxxxxx` are fictional placeholders — set them **exactly once** in `$HOME/.config/csc-hpc/identity.sh` (Section 0). Every other script (Global Configuration, `Python4ML.sh`, `ml-update`) sources that file automatically, so there's nothing left to edit by hand downstream.
+* `ENV_ARCH` is intentionally excluded from the identity file — it's chosen explicitly per build in Global Configuration, and auto-detected via `uname -m` in the loader and `ml-update`.
 * `PROJECT_USER_DIR` is not necessarily your CSC login username; it's just the directory under the project's scratch space.
 * `PYTHON_BASE` (`$BASE_SCRATCH/Python`) is the shared parent for both the ML and SmartSim stacks; `PYTHON_ROOT` (`$PYTHON_BASE/PythonML`) is the ML-specific subtree — keep `requirements.in`, `envs/`, and update scripts strictly under `PYTHON_ROOT`.
 * `requirements.in` = direct specs (unpinned by design); `requirements-$ENV_ARCH.txt` = exact installed versions. Use the latter when an exact set must be reproduced.
@@ -990,3 +1037,4 @@ Then rebuild per Section 11 on the matching architecture.
 * PySR's Julia dependency is resolved and precompiled **at build time** inside `extra4ML.sh` / `update4ML.sh`; `PYTHON_JULIAPKG_OFFLINE=yes` at runtime prevents any accidental re-download.
 * Use compute nodes for the actual container build; consider the login node only for download-heavy steps if a compute allocation's network access is the bottleneck — check your project's policy first.
 * If migrating from the old flat `Python/` layout, do the one-time move in Section 1.3 before sourcing the loader — do not run both layouts in parallel.
+* The identity file (Section 0) and the directory-layout migration (Section 1.3) are independent — you can adopt either one without the other.
