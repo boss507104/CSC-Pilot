@@ -500,7 +500,7 @@ config_file.write_text(json.dumps(config, indent=4) + "\n")
 print(f"Wrote SmartSim Linux ARM64 CPU config: {config_file}")
 PY
 
-# --- Build only the SmartSim database executable, no RedisAI / ML backends ---
+# --- Build Redis and RedisAI without ML runtime backends ---
 export USE_SYSTEMD=no
 
 env CFLAGS="-Wno-incompatible-pointer-types" \
@@ -511,7 +511,10 @@ env CFLAGS="-Wno-incompatible-pointer-types" \
 env CFLAGS="-Wno-incompatible-pointer-types" \
     CXXFLAGS="-Wno-incompatible-pointer-types" \
     USE_SYSTEMD=no \
-    smart build --device cpu --skip-backends --skip-python-packages
+    smart build \
+        --device cpu \
+        --no_tf \
+        --no_pt
 
 # Restore packages potentially disturbed by the SmartSim database build
 uv pip install \
@@ -1022,7 +1025,7 @@ config = {
 config_file.write_text(json.dumps(config, indent=4) + "\n")
 PY
 
-# Rebuild the Redis-only SmartSim database executable
+# Rebuild Redis and RedisAI without ML runtime backends
 export USE_SYSTEMD=no
 
 env \
@@ -1037,8 +1040,8 @@ env \
     USE_SYSTEMD=no \
     smart build \
         --device cpu \
-        --skip-backends \
-        --skip-python-packages
+        --no_tf \
+        --no_pt
 
 # Restore the constrained dependency set after smart build
 uv pip install \
@@ -1307,7 +1310,7 @@ Rebuild it:
 ```bash
 export USE_SYSTEMD=no
 smart clobber
-smart build --device cpu --skip-backends --skip-python-packages
+smart build --device cpu --no_tf --no_pt
 ```
 then restore packages: `uv pip install --link-mode=copy --requirements "$PYTHON_ROOT/requirements.in" && uv pip check`.
 
