@@ -28,7 +28,7 @@ Last updated: 16 July 2026
 
 This folder contains configurations for deploying a reliable, high-performance runtime stack containing **SmartSim 0.8.0 + SmartRedis 0.6.1** on CSC supercomputers (**Puhti / Mahti / Roihu**). The setup focuses on coupling **JAX + Equinox** workflows with SmartSim/SmartRedis and parallel OpenFOAM solvers.
 
-SmartRedis is used primarily for exchanging tensors, model weights, metrics, and predictions between solver, producer, consumer, and monitoring processes. Model execution is performed by external Python/JAX worker processes rather than by RedisAI inside the database. ONNX tooling may still be installed for optional export or offline conversion workflows, but RedisAI, ONNXRuntime, PyTorch, and TensorFlow backends are not built in the default workflow.
+SmartRedis is used primarily for exchanging tensors, model weights, metrics, and predictions between solver, producer, consumer, and monitoring processes. Model execution is performed by external Python/JAX worker processes rather than by RedisAI inside the database. ONNX tooling may still be installed for optional export or offline conversion workflows. The RedisAI module required by the SmartSim Orchestrator is built, while ONNXRuntime, PyTorch, and TensorFlow model-execution backends are not built in the default workflow.
 
 Instead of Conda/pip environments directly on the parallel filesystem, we use **Tykky** to package the whole Python stack into a single-file container image, avoiding Lustre metadata slowdowns from thousands of small file imports.
 
@@ -56,7 +56,7 @@ ONNX         1.17.0, optional tooling
 NumPy        < 2.0.0
 protobuf     3.20.3
 CMake        < 3.30.0
-RedisAI      not built in the default workflow
+RedisAI      module built for Orchestrator startup; ML runtimes disabled
 ```
 
 ```text
@@ -66,7 +66,7 @@ requirements-$ENV_ARCH.txt Installed-state snapshot recorded after a successful 
 
 Dependency resolution and installation happen inside the Tykky Python 3.11 build — no external Conda, Miniforge, Mamba, module-based Python, or venv is needed.
 
-SmartSim is deliberately installed **after** the patched SmartRedis Python client, because `smartsim==0.8.0` otherwise tries to pull the incomplete PyPI `smartredis==0.6.1` sdist and fails to build on ARM64. The default build skips RedisAI and ML backends (`--skip-backends --skip-python-packages`), which is sufficient for orchestration, database startup, and tensor exchange — inference itself runs in external Python/JAX worker processes. `requirements.in` is reapplied after `smart build` as a conservative restoration step, since the SmartSim build can perturb already-installed packages.
+SmartSim is deliberately installed **after** the patched SmartRedis Python client, because `smartsim==0.8.0` otherwise tries to pull the incomplete PyPI `smartredis==0.6.1` sdist and fails to build on ARM64. The default build includes the RedisAI module required for orchestration and database startup, while disabling TensorFlow, PyTorch, and ONNXRuntime model-execution backends. Tensor exchange remains available, and inference itself runs in external Python/JAX worker processes. `requirements.in` is reapplied after `smart build` as a conservative restoration step, since the SmartSim build can perturb already-installed packages.
 
 This configuration is part of the [CSC Environment Helpers Framework](https://github.com/boss507104/CSCEnvironmentHelpers). Production examples coupling SmartSim, SmartRedis, OpenFOAM, and JAX live in [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
 
@@ -272,7 +272,8 @@ You do **not** need to touch `.tykky_runtime_smartsim_*` — it's recreated fres
 | pydantic | resolved | Typed config/data validation for producer, consumer, and orchestration scripts |
 | loguru | resolved | Structured logging across solver/producer/consumer/monitoring processes |
 | pyinstrument | resolved | Lightweight statistical profiler for build/runtime performance checks |
-| RedisAI / ML backends | not built by default | Only needed for DB-side `set_model` / `run_model` |
+| RedisAI module | built by default | Required by the SmartSim Orchestrator for database startup |
+| ML runtime backends | not built by default | Only needed for DB-side `set_model` / `run_model` |
 
 ---
 
@@ -596,7 +597,7 @@ conda-containerize new \
     "$PYTHON_ROOT/base4SmartSim.yml"
 ```
 
-Build order: base Python 3.11 env → `extra4SmartSim.sh` → install `uv` → install from `requirements.in` → install patched SmartRedis client → install SmartSim 0.8.0 → patch ARM64 detection/config → `smart build` (Redis-only) → restore `requirements.in` → `uv pip check` → record `requirements-$ENV_ARCH.txt` → package the image.
+Build order: base Python 3.11 env → `extra4SmartSim.sh` → install `uv` → install from `requirements.in` → install patched SmartRedis client → install SmartSim 0.8.0 → patch ARM64 detection/config → `smart build` (RedisAI module included, ML runtime backends disabled) → restore `requirements.in` → `uv pip check` → record `requirements-$ENV_ARCH.txt` → package the image.
 
 Check the result:
 
@@ -857,7 +858,7 @@ uv pip check
 smart validate --device cpu
 ```
 
-Missing RedisAI, ONNXRuntime, PyTorch, or TensorFlow backends here are expected — the default build deliberately skips RedisAI and all ML backends. This validates the Redis database executable and the SmartSim/SmartRedis orchestration path, not RedisAI model execution.
+Missing ONNXRuntime, PyTorch, or TensorFlow backends here is expected. The RedisAI module itself should be present because the SmartSim Orchestrator requires it for database startup.
 
 Native library and CMake check:
 
@@ -1288,7 +1289,7 @@ Then rebuild per Section 12 on the matching architecture.
 
 **SmartRedis PyPI source build fails on ARM64** — errors like missing `EnableCoverage`/`Config.smartredis.cmake.in` usually mean `smartsim==0.8.0` got installed too early via `requirements.in`. Keep it out of `requirements.in`; the patched SmartRedis client must install first.
 
-**`smart build --device cpu` reports no valid device choices on ARM64** — Python reports `aarch64` but SmartSim expects `arm64` internally, and ships no Linux ARM64 CPU platform JSON. `extra4SmartSim.sh` patches the alias and adds a minimal `linux + arm64 + cpu` config with `ml_packages = []`, enabling Redis-only builds without RedisAI/ONNXRuntime/PyTorch/TensorFlow.
+**`smart build --device cpu` reports no valid device choices on ARM64** — Python reports `aarch64` but SmartSim expects `arm64` internally, and ships no Linux ARM64 CPU platform JSON. `extra4SmartSim.sh` patches the alias and adds a minimal `linux + arm64 + cpu` config with `ml_packages = []`, enabling an Orchestrator-capable build with the RedisAI module but without ONNXRuntime, PyTorch, or TensorFlow model-execution backends.
 
 **`jax2onnx` reports an incompatible ONNX version** — keep `onnx==1.17.0` in `requirements.in`, and make sure `extra4SmartSim.sh` reapplies `requirements.in` plus `uv pip check` after `smart build`. Don't remove that final check.
 
@@ -1343,7 +1344,7 @@ This environment is the software foundation for coupled multi-physics simulation
 * linking external C++ or Fortran solvers against the native SmartRedis client;
 * validating producer/consumer configuration with `pydantic` models before a run starts, logging the coupled pipeline with `loguru`, and profiling slow exchange loops with `pyinstrument`.
 
-RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is **not** part of the default workflow — that requires separately building RedisAI and ONNXRuntime backends on a supported platform. The full production architecture, Slurm templates, database placement strategies, and model-injection examples are maintained in [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
+RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is not part of the default workflow because no model-execution backend such as ONNXRuntime, PyTorch, or TensorFlow is built. The full production architecture, Slurm templates, database placement strategies, and model-injection examples are maintained in [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
 
 ---
 
@@ -1356,7 +1357,7 @@ RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is **n
 * `PYTHON_BASE` (`$BASE_SCRATCH/Python`) is the shared parent for both the SmartSim and ML stacks; `PYTHON_ROOT` (`$PYTHON_BASE/PythonSmartSim`) is the SmartSim-specific subtree — keep `requirements.in`, `envs/`, and update scripts strictly under `PYTHON_ROOT`. **Do not merge with the ML stack** (`PythonML/`) — NumPy/protobuf pins conflict.
 * `requirements.in` = direct deps + constraints, *not* SmartSim itself; `requirements-$ENV_ARCH.txt` = installed-state snapshot excluding SmartSim/SmartRedis, not a separately compiled lockfile.
 * The patched SmartRedis Python client and SmartSim are always installed from source, in that order, on every build/update.
-* The default build skips RedisAI and all ML backends; SmartRedis handles tensor/weight/metric/prediction exchange while JAX/Equinox execution happens in external Python processes.
+* The default build includes the RedisAI module required by the SmartSim Orchestrator, but skips ONNXRuntime, PyTorch, and TensorFlow model-execution backends.
 * Preserve the JAX, ONNX, NumPy, protobuf, Python, and CMake compatibility pins unless deliberately revalidating the stack.
 * `requirements.in` is reapplied after `smart build`, followed by `uv pip check`, as a conservative restoration/validation step — don't skip either.
 * Every `uv pip install` uses `--link-mode=copy` (uv cache and Tykky target env are on different filesystems).
@@ -1365,7 +1366,7 @@ RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is **n
 * Native libraries are expected under `install/lib64`; use `install/lib` if that's what your target system produces.
 * `CMAKE_PREFIX_PATH` points at the SmartRedis install prefix for downstream CMake projects.
 * `$SMARTREDIS_DIR` (`SmartRedis-x64/`, `SmartRedis-arm64/`) lives directly under `$BASE_SCRATCH`, outside the `Python/` subtree, since it's a native build artefact, not a Python package.
-* Missing RedisAI/ONNXRuntime/PyTorch/TensorFlow in `smart validate` is expected for this Redis-only build.
+* Missing ONNXRuntime/PyTorch/TensorFlow in `smart validate` is expected. RedisAI itself should not be missing, because the SmartSim Orchestrator depends on it for database startup.
 * Use compute nodes for installation, SmartSim database compilation, SmartRedis native compilation, and computational workloads; avoid large installs/builds on login nodes (see Section 4's download tip for the one exception).
 * Prefer a full rebuild over repeated incremental updates once the dependency set changes substantially.
 * If migrating from the old flat `Python/` layout, do the one-time move in Section 1.3 before sourcing the loader — do not run both layouts in parallel.
