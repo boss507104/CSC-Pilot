@@ -1,51 +1,41 @@
 # SmartSim Environment Configuration
 
-Last updated: 16 July 2026
+Last updated: 18 July 2026
 
 > [!TIP]
 > ## One-Command Installation
 >
-> You can install the complete Python environment for SmartSim using the `smartsim-python.sh` script included in this repository.
->
-> Download or copy `smartsim-python.sh` to:
->
-> ```text
-> /scratch/project_xxxxxxx/PROJECT_USER_DIR/
-> ```
->
-> Then run:
+> Copy `smartsim-python.sh` to `/scratch/project_xxxxxxx/PROJECT_USER_DIR/`, then run:
 >
 > ```bash
 > chmod +x smartsim-python.sh
 > ./smartsim-python.sh
 > ```
->
-> The script performs the complete installation automatically.
 
 ---
 
 ## Overview & Motivation
 
-This folder contains configurations for deploying a reliable, high-performance runtime stack containing **SmartSim 0.8.0 + SmartRedis 0.6.1** on CSC supercomputers (**Puhti / Mahti / Roihu**). The setup focuses on coupling **JAX + Equinox** workflows with SmartSim/SmartRedis and parallel OpenFOAM solvers.
+This folder deploys **SmartSim 0.8.0 + SmartRedis 0.6.1** on CSC supercomputers (**Puhti / Mahti / Roihu**), coupling **JAX + Equinox** workflows with SmartSim/SmartRedis and OpenFOAM solvers.
 
-SmartRedis is used primarily for exchanging tensors, model weights, metrics, and predictions between solver, producer, consumer, and monitoring processes. Model execution is performed by external Python/JAX worker processes rather than by RedisAI inside the database. ONNX tooling may still be installed for optional export or offline conversion workflows. The RedisAI module required by the SmartSim Orchestrator is built, while ONNXRuntime, PyTorch, and TensorFlow model-execution backends are not built in the default workflow.
+**The Redis + RedisAI Orchestrator is x64-only in this pipeline.** SmartSim's RedisAI build chain does not build reliably on Linux ARM64 here (RedisAI's dependency-fetch step for `dlpack.h` doesn't complete on aarch64, causing the `smart build` compile step to fail). Rather than continue patching around that, the architectures now have different roles:
 
-Instead of Conda/pip environments directly on the parallel filesystem, we use **Tykky** to package the whole Python stack into a single-file container image, avoiding Lustre metadata slowdowns from thousands of small file imports.
+| Architecture | Role |
+|---|---|
+| `x64` (Roihu CPU / Puhti / Mahti) | Runs the full SmartSim Orchestrator: Redis + the RedisAI module, built via `smart build`. |
+| `arm64` (Roihu GPU) | JAX/Equinox training and inference only. Installs the SmartRedis Python client to talk to a remote x64 Orchestrator, but never runs `smart build`. |
 
-The SmartSim stack lives in its own subtree — `Python/PythonSmartSim/` — sitting alongside a sibling `Python/PythonML/` stack (documented separately), so the two never share `requirements.in`, `envs/`, or update scripts. **Do not merge these environments** — mixing them risks NumPy/protobuf conflicts between the SmartSim-pinned stack and the newer unconstrained ML stack.
+Model execution itself is never performed by RedisAI in this workflow — inference runs in external Python/JAX worker processes, with SmartRedis carrying tensors, weights, metrics, and predictions between the Orchestrator and those workers. On x64, RedisAI's TensorFlow, PyTorch, and ONNXRuntime model-execution backends are still disabled — only the RedisAI module itself is built, since the Orchestrator requires it to start.
 
-Roihu needs **two separate Tykky environments**:
+We use **Tykky** to package the whole Python stack into a single-file container image, avoiding Lustre metadata slowdowns from thousands of small file imports.
 
-| Track | Applies to | CPU arch |
-|---|---|---|
-| `x64` | Roihu CPU nodes, Puhti, Mahti | x86_64 / amd64 |
-| `arm64` | Roihu GPU nodes | aarch64 / ARM64 |
+The SmartSim stack lives in `Python/PythonSmartSim/`, alongside a sibling `Python/PythonML/` stack (documented separately) — the two never share `requirements.in`, `envs/`, or update scripts, and **should not be merged** (NumPy/protobuf conflicts).
 
-A container built for one architecture will not run on the other. The **SmartRedis native library** is also built separately per architecture, since it's linked directly by OpenFOAM, C++, and Fortran solvers.
+A Tykky container built for one architecture will not run on the other. The **SmartRedis native library** (Section 6, used for OpenFOAM/C++/Fortran linkage) is built separately per architecture via CMake, independent of the `smart build` step described above.
 
-**Why Tykky:** near-instant imports, a single reproducible image, fast startup for short/high-volume jobs, and isolation from the host environment.
+**Why Tykky:** near-instant imports, a single reproducible image, fast startup, isolation from the host environment.
 
-**Why uv:** fast resolution/installation of a large scientific stack, plus `uv pip check` to validate the final dependency graph. `--link-mode=copy` is used throughout because the uv cache and the temporary Tykky build environment live on different filesystems, so hardlinks aren't possible.
+**Why uv:** fast resolution/installation, plus `uv pip check` to validate the final dependency graph. `--link-mode=copy` is used throughout since the uv cache and the Tykky build environment live on different filesystems.
 
 ```text
 Python       3.11
@@ -56,7 +46,7 @@ ONNX         1.17.0, optional tooling
 NumPy        < 2.0.0
 protobuf     3.20.3
 CMake        < 3.30.0
-RedisAI      module built for Orchestrator startup; ML runtimes disabled
+RedisAI      built on x64 only; not built on arm64
 ```
 
 ```text
@@ -64,11 +54,9 @@ requirements.in            Human-maintained direct package specifications and co
 requirements-$ENV_ARCH.txt Installed-state snapshot recorded after a successful build (excludes SmartSim/SmartRedis)
 ```
 
-Dependency resolution and installation happen inside the Tykky Python 3.11 build — no external Conda, Miniforge, Mamba, module-based Python, or venv is needed.
+SmartSim is installed **after** the patched SmartRedis Python client on both architectures, because `smartsim==0.8.0` otherwise tries to pull the incomplete PyPI `smartredis==0.6.1` sdist. On x64 only, `smart build` then compiles Redis + RedisAI; `requirements.in` is reapplied afterward as a conservative restoration step, since the build can perturb already-installed packages. On arm64, that build step is skipped entirely.
 
-SmartSim is deliberately installed **after** the patched SmartRedis Python client, because `smartsim==0.8.0` otherwise tries to pull the incomplete PyPI `smartredis==0.6.1` sdist and fails to build on ARM64. The default build includes the RedisAI module required for orchestration and database startup, while disabling TensorFlow, PyTorch, and ONNXRuntime model-execution backends. Tensor exchange remains available, and inference itself runs in external Python/JAX worker processes. `requirements.in` is reapplied after `smart build` as a conservative restoration step, since the SmartSim build can perturb already-installed packages.
-
-This configuration is part of the [CSC Environment Helpers Framework](https://github.com/boss507104/CSCEnvironmentHelpers). Production examples coupling SmartSim, SmartRedis, OpenFOAM, and JAX live in [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
+Part of the [CSC Environment Helpers Framework](https://github.com/boss507104/CSCEnvironmentHelpers). Production examples live in [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
 
 ---
 
@@ -81,68 +69,62 @@ Set identity once (Section 0) — shared with the ML stack if you have one
 Choose target architecture
   |
   +-- x64  (Roihu CPU / Puhti / Mahti)
-  |     Global Config (x64) --> build Tykky env --> build SmartRedis-x64 native library
+  |     Global Config (x64) --> build Tykky env (Redis + RedisAI via smart build)
+  |     --> build SmartRedis-x64 native library
+  |     Runs the SmartSim Orchestrator.
   |
   +-- arm64 (Roihu GPU)
-        Global Config (arm64) --> build Tykky env --> build SmartRedis-arm64 native library
+        Global Config (arm64) --> build Tykky env (SmartRedis client + JAX only, no smart build)
+        --> build SmartRedis-arm64 native library
+        Connects to a remote x64 Orchestrator; runs JAX/Equinox training and inference.
 
 After the required track(s) are built:
   Create Python4SmartSim.sh --> source Python4SmartSim.sh
   --> loader picks x64/arm64 and matching native library from `uname -m`
 ```
 
-Skip the `arm64` track entirely if you never use Roihu GPU nodes.
+Skip the `arm64` track entirely if you never run JAX training/inference on Roihu GPU nodes against this stack.
 
 ---
 
 ## 0. One-Time Identity Configuration
 
-Every script in this guide needs the same three values: your CSC project ID, your directory under that project, and the environment nickname. Rather than hardcoding these into every generated script, set them **once** in a small file under `$HOME`, and have everything else `source` it.
+Every script needs three values: your CSC project ID, your directory under that project, and the environment nickname. Set them **once** in a file under `$HOME`.
 
-> `Harry`, `Dumbledore`, and `project_xxxxxxx` below are fictional placeholders. Fill in your real values **only here** — Global Configuration (Section 1), the loader (Section 7), and `smartsim-update` (Section 11) all source this one file, so nothing downstream needs manual editing.
+> `Harry`, `Dumbledore`, and `project_xxxxxxx` are fictional placeholders. Fill in real values **only here**.
 
-**If you already created this file for the ML stack, skip straight to the "Verify" step below** — the SmartSim and ML stacks share the same identity file. `CSC_PROJECT`, `PROJECT_USER_DIR`, and `ENV_NICKNAME` don't need to differ between the two; the `PythonML/` vs `PythonSmartSim/` split, and the differing Python versions baked into each environment's directory name, already keep the two stacks fully separate.
+**If you already created this for the ML stack, skip to "Verify" below** — both stacks share the identity file; `PythonML/` vs `PythonSmartSim/` and differing Python versions already keep them separate.
 
 ```bash
 mkdir -p "$HOME/.config/csc-hpc"
 
 cat <<'EOF' > "$HOME/.config/csc-hpc/identity.sh"
-# --- USER CONFIGURATION START ---
-export CSC_PROJECT="project_xxxxxxx"        # Your CSC project ID
-export PROJECT_USER_DIR="Harry"             # Your directory under the CSC project
-export ENV_NICKNAME="Dumbledore"            # Desired environment name
-# --- USER CONFIGURATION END ---
+export CSC_PROJECT="project_xxxxxxx"
+export PROJECT_USER_DIR="Harry"
+export ENV_NICKNAME="Dumbledore"
 EOF
 
 chmod 600 "$HOME/.config/csc-hpc/identity.sh"
 ```
 
-Edit it once with your real values:
+Edit with real values, then verify:
 
 ```bash
 nano "$HOME/.config/csc-hpc/identity.sh"
-```
 
-Verify:
-
-```bash
 source "$HOME/.config/csc-hpc/identity.sh"
 echo "CSC_PROJECT=$CSC_PROJECT"
 echo "PROJECT_USER_DIR=$PROJECT_USER_DIR"
 echo "ENV_NICKNAME=$ENV_NICKNAME"
 ```
 
-This file lives directly under `$HOME`, not on scratch — consistent with the "Home Directory: lightweight config files only" principle.
-
-`ENV_ARCH` is deliberately **not** part of this file — it's a per-build choice you make explicitly in Global Configuration (Section 1), and it's auto-detected from `uname -m` everywhere else (the loader, `smartsim-update`). Baking a fixed architecture into identity would fight with that auto-detection the moment you use both a CPU and a GPU node.
-
-**If you already have an old-style `Python4SmartSim.sh` or `smartsim-update` with hardcoded values:** regenerating them from Section 7 / Section 11 after creating this identity file is a cheap, instant rewrite of a small script — it does **not** require rebuilding the Tykky container or the native SmartRedis library.
+`ENV_ARCH` is **not** part of this file — it's chosen per build in Section 1, and auto-detected via `uname -m` in the loader / `smartsim-update`.
 
 ---
 
 ## 1. Global Configuration
 
-Run **one** of these blocks depending on the node you're on. Both blocks source the identity file from Section 0 — the only line that differs between them is `ENV_ARCH`.
+Run **one** block per node. Only `ENV_ARCH` differs.
 
 ### 1.1 x64 (Roihu CPU / Puhti / Mahti)
 
@@ -188,22 +170,16 @@ echo "SMARTREDIS_DIR=$SMARTREDIS_DIR"
 echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
 ```
 
-`PROJECT_USER_DIR` is not necessarily your CSC login username; it's just the directory under the project's scratch space.
-
-**Directory layout produced by this config:**
+**Directory layout:**
 
 ```text
 /scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities/          # $BASE_SCRATCH
 ├── .tykky_runtime_smartsim_x64/
 ├── .tykky_runtime_smartsim_arm64/
 ├── Python4SmartSim.sh
-├── Python4ML.sh                                    # sibling stack, documented separately
-├── SmartRedis-x64/                 # native build   # $SMARTREDIS_DIR (x64)
-│   ├── build/
-│   └── install/{include,lib64,share}/
-├── SmartRedis-arm64/                # native build  # $SMARTREDIS_DIR (arm64)
-│   ├── build/
-│   └── install/{include,lib64,share}/
+├── Python4ML.sh                                    # sibling stack
+├── SmartRedis-x64/                                  # $SMARTREDIS_DIR (x64)
+├── SmartRedis-arm64/                                # $SMARTREDIS_DIR (arm64)
 └── Python/                                           # $PYTHON_BASE
     ├── PythonSmartSim/                               # $PYTHON_ROOT
     │   ├── base4SmartSim.yml
@@ -213,16 +189,12 @@ echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
     │   ├── requirements-x64.txt
     │   ├── requirements-arm64.txt
     │   └── envs/
-    │       ├── $ENV_NICKNAME-3.11-x64/
-    │       └── $ENV_NICKNAME-3.11-arm64/
-    └── PythonML/                                     # sibling stack, documented separately
+    └── PythonML/                                     # sibling stack
 ```
-
-`SmartRedis-x64/` and `SmartRedis-arm64/` stay directly under `$BASE_SCRATCH`, not under `PythonSmartSim/` — they're native build artefacts, not Python packages, and are shared reference points for solver linkage regardless of how the Python subtree is organised.
 
 ### 1.3 Migrating an Existing Environment (One-Time)
 
-If you already had a working environment directly under `$BASE_SCRATCH/Python/` (the old flat layout), move the SmartSim-specific files into the new `PythonSmartSim/` subfolder **once**, after sourcing the Global Configuration above:
+If you had files directly under `$BASE_SCRATCH/Python/` (old flat layout), move them once:
 
 ```bash
 mkdir -p "$PYTHON_ROOT"
@@ -235,45 +207,30 @@ for item in base4SmartSim.yml extra4SmartSim.sh update4SmartSim.sh \
         echo "Moved $item -> $PYTHON_ROOT/"
     fi
 done
-
-ls -l "$PYTHON_ROOT"
 ```
 
-The `envs/` move brings the already-built Tykky containers along intact — Tykky environments are relocatable as a self-contained unit, but **move the whole `envs/` directory in one piece**, not individual files inside it. `$SMARTREDIS_DIR` (`SmartRedis-x64/`, `SmartRedis-arm64/`) does **not** move — it was never under the old `Python/` tree in the first place.
-
-After moving, verify with:
-
-```bash
-source "$BASE_SCRATCH/Python4SmartSim.sh"
-echo "$ENV_PREFIX"; echo "$SMARTREDIS_DIR"
-python --version
-```
-
-If `python --version` fails or `$ENV_PREFIX` doesn't exist, don't debug in place — fall back to a full rebuild (Section 12) at the new path rather than patching a half-moved container.
-
-You do **not** need to touch `.tykky_runtime_smartsim_*` — it's recreated fresh by the build/update scripts on every run. This directory migration is independent of Section 0's identity file — you only need to do it once, regardless of whether you've adopted the shared identity file yet.
+Move `envs/` as one piece. `$SMARTREDIS_DIR` never moves — verify with `source "$BASE_SCRATCH/Python4SmartSim.sh" && python --version`; if that fails, do a full rebuild (Section 12) rather than patching in place.
 
 ---
 
 ## 2. Dependency Overview
 
-| Package | Version Policy | Purpose |
+| Package | Version | Purpose |
 | --- | --- | --- |
 | Python | 3.11 | Base interpreter |
-| uv | latest at build time | Resolution, installation, `uv pip check` validation |
-| SmartSim | 0.8.0 | Orchestration and Redis database lifecycle |
-| SmartRedis | 0.6.1-compatible patched source | Python client + native C++/Fortran client library |
-| JAX | 0.6.2, CUDA 12 | Autodiff / training / inference |
+| uv | latest at build | Resolution, installation, `uv pip check` |
+| SmartSim | 0.8.0 | Orchestration (Redis lifecycle on x64; client-only on arm64) |
+| SmartRedis | 0.6.1-compatible patched source | Python client + native C++/Fortran library, both architectures |
+| JAX | 0.6.2, CUDA 12 | Autodiff / training / inference, primarily arm64 |
 | Equinox | resolved | JAX-native model definitions |
 | ONNX | 1.17.0 | Optional export/conversion tooling only |
 | NumPy | `< 2.0.0` | Required by the SmartSim stack |
 | protobuf | 3.20.3 | Compatibility layer for SmartSim / ONNX tooling |
 | CMake | `< 3.30.0` | SmartRedis / SmartSim native build compatibility |
-| pydantic | resolved | Typed config/data validation for producer, consumer, and orchestration scripts |
-| loguru | resolved | Structured logging across solver/producer/consumer/monitoring processes |
-| pyinstrument | resolved | Lightweight statistical profiler for build/runtime performance checks |
-| RedisAI module | built by default | Required by the SmartSim Orchestrator for database startup |
-| ML runtime backends | not built by default | Only needed for DB-side `set_model` / `run_model` |
+| pydantic | resolved | Typed config for producer/consumer/orchestration scripts |
+| loguru | resolved | Structured logging |
+| pyinstrument | resolved | Lightweight statistical profiler |
+| RedisAI module | **x64 only** | Built via `smart build`; not attempted on arm64 |
 
 ---
 
@@ -304,7 +261,7 @@ EOF
 
 ### 3.2 `requirements.in`
 
-Do **not** add `smartsim==0.8.0` here — it's installed separately in `extra4SmartSim.sh` after the patched SmartRedis Python client is available.
+Do **not** add `smartsim==0.8.0` here — it's installed separately in `extra4SmartSim.sh`.
 
 ```bash
 cat <<'EOF' > "$PYTHON_ROOT/requirements.in"
@@ -423,9 +380,9 @@ typing-extensions
 EOF
 ```
 
-`pydantic` gives producer/consumer/orchestration scripts typed, validated config objects instead of raw dicts; `loguru` replaces ad-hoc `print()`/`logging` boilerplate across solver, producer, consumer, and monitoring processes with one consistent structured logger; `pyinstrument` is a low-overhead statistical profiler useful for spot-checking where time actually goes during a slow build step or a slow SmartRedis exchange loop, without the overhead of a full deterministic profiler.
-
 ### 3.3 `extra4SmartSim.sh` (post-install, runs *inside* the build)
+
+`smart build` runs **only on x64**. On arm64, SmartRedis + SmartSim install but the Orchestrator build is skipped.
 
 ```bash
 cat <<'EOF' > "$PYTHON_ROOT/extra4SmartSim.sh"
@@ -434,6 +391,7 @@ set -e
 
 : "${CW_BUILD_TMPDIR:?CW_BUILD_TMPDIR is not set}"
 : "${PYTHON_ROOT:?PYTHON_ROOT is not set}"
+: "${ENV_ARCH:?ENV_ARCH is not set}"
 
 export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
@@ -447,7 +405,7 @@ uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
-# --- Patched SmartRedis Python client ---
+# --- Patched SmartRedis Python client (both architectures) ---
 rm -rf "$CW_BUILD_TMPDIR/SmartRedis"
 git clone \
     https://github.com/boss507104/SmartRedis.git \
@@ -463,74 +421,49 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
 
 python -m pip install --no-cache-dir .
 
-export CFLAGS="$OLD_CFLAGS" CXXFLAGS="$OLD_CXXFLAGS"
+export CFLAGS="$OLD_CFLAGS" CXXFLAGS="$OLD_CXXFLAGX"
 export CPPFLAGS="$OLD_CPPFLAGS" LDFLAGS="$OLD_LDFLAGS"
 
-# --- SmartSim, installed only after SmartRedis is available ---
+# --- SmartSim, installed only after SmartRedis (both architectures) ---
 uv pip install --link-mode=copy smartsim==0.8.0
 
-# Patch SmartSim architecture detection and add a Linux ARM64 CPU config
-python - <<'PY'
-from pathlib import Path
-import json
-import smartsim
+# --- Build the Orchestrator (Redis + RedisAI) — x64 ONLY ---
+# SmartSim's RedisAI build chain does not fetch its dlpack dependency
+# correctly on Linux ARM64 in this pipeline (fatal error: dlpack/dlpack.h:
+# No such file or directory during `make`). Rather than patch that build
+# chain, x64 builds the full Orchestrator; arm64 stays client-only and
+# connects to a remote x64 Orchestrator over the network.
+if [ "$ENV_ARCH" = "x64" ]; then
+    export USE_SYSTEMD=no
 
-smartsim_root = Path(smartsim.__file__).resolve().parent
+    env CFLAGS="-Wno-incompatible-pointer-types" \
+        CXXFLAGS="-Wno-incompatible-pointer-types" \
+        USE_SYSTEMD=no \
+        smart clobber
 
-platform_file = smartsim_root / "_core" / "_install" / "platform.py"
-text = platform_file.read_text()
-text = text.replace('    AARCH64 = "aarch64"\n', '')
-if 'if string == "aarch64":' not in text:
-    text = text.replace(
-        '        return cls(string)\n',
-        '        if string == "aarch64":\n'
-        '            string = "arm64"\n'
-        '        return cls(string)\n',
-        1,
-    )
-platform_file.write_text(text)
-print(f"Patched SmartSim platform file: {platform_file}")
+    env CFLAGS="-Wno-incompatible-pointer-types" \
+        CXXFLAGS="-Wno-incompatible-pointer-types" \
+        USE_SYSTEMD=no \
+        smart build \
+            --device cpu \
+            --skip-torch \
+            --skip-tensorflow \
+            --skip-onnx
+else
+    echo "Skipping smart build (Orchestrator/RedisAI) on $ENV_ARCH."
+    echo "This environment is a SmartRedis client + JAX worker only,"
+    echo "and connects to an x64 SmartSim Orchestrator over the network."
+fi
 
-config_dir = smartsim_root / "_core" / "_install" / "configs" / "mlpackages"
-config_file = config_dir / "linux-arm64-cpu.json"
-config = {
-    "platform": {"operating_system": "linux", "architecture": "arm64", "device": "cpu"},
-    "ml_packages": []
-}
-config_file.write_text(json.dumps(config, indent=4) + "\n")
-print(f"Wrote SmartSim Linux ARM64 CPU config: {config_file}")
-PY
-
-# --- Build Redis and the RedisAI module without ML runtime backends ---
-# `smart build` defaults to building ALL backends (Torch, TensorFlow, ONNX)
-# unless explicitly skipped. --skip-torch/--skip-tensorflow/--skip-onnx are
-# the flags accepted by this smartsim==0.8.0 CLI; --no_tf/--no_pt and
-# --skip-backends were both rejected with "unrecognized arguments" here.
-export USE_SYSTEMD=no
-
-env CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart clobber
-
-env CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart build \
-        --device cpu \
-        --skip-torch \
-        --skip-tensorflow \
-        --skip-onnx
-
-# Restore packages potentially disturbed by the SmartSim database build
+# Restore packages potentially disturbed by the build above
 uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
 uv pip check
 
-# Record installed versions; SmartSim/SmartRedis are installed separately
-# and intentionally excluded from this replay file.
+# Record installed versions; SmartSim/SmartRedis excluded (installed
+# fresh from source every build, never replayed).
 python -m pip list --format=freeze \
     | grep -v '^smartredis==' \
     | grep -v '^smartsim==' \
@@ -543,15 +476,13 @@ EOF
 chmod +x "$PYTHON_ROOT/extra4SmartSim.sh"
 ```
 
-The `onnx==1.17.0` pin is kept for optional export/conversion tooling, not for RedisAI execution. The locally patched SmartRedis client and SmartSim itself are excluded from `requirements-$ENV_ARCH.txt` because they're always installed fresh from source, never replayed.
+The `onnx==1.17.0` pin is for optional export/conversion tooling only.
 
 ---
 
 ## 4. Request a Build Node
 
-> **Tip — downloads:** `uv pip install`, the SmartRedis `git clone`, and `smart build` all need outbound internet access. If your compute-node allocation has restricted/unstable external network access and the build stalls specifically at a download step, try running the download-heavy parts on the **login node** first (or the whole build, if your project's policy allows it), and reserve `srun`/`sinteractive` for genuinely compute-heavy steps. Check your cluster's login-node usage policy first.
-
-This block is reused for the initial build, updates, rebuilds, and the native SmartRedis build — just re-run it whenever you need a fresh allocation.
+> **Tip — downloads:** `uv pip install`, the SmartRedis `git clone`, and (x64 only) `smart build` need outbound internet access. If a compute allocation's network is restricted, try the download-heavy steps on the login node first.
 
 **x64:**
 
@@ -575,7 +506,7 @@ sinteractive \
     --time 01:30:00
 ```
 
-If the environment variables from Section 1 aren't inherited into the new shell, re-run the matching Global Configuration block after the allocation starts (it will re-source your identity file automatically).
+If Section 1's variables aren't inherited, re-run the matching Global Configuration block.
 
 ---
 
@@ -602,7 +533,9 @@ conda-containerize new \
     "$PYTHON_ROOT/base4SmartSim.yml"
 ```
 
-Build order: base Python 3.11 env → `extra4SmartSim.sh` → install `uv` → install from `requirements.in` → install patched SmartRedis client → install SmartSim 0.8.0 → patch ARM64 detection/config → `smart build` (RedisAI module included, ML runtime backends disabled) → restore `requirements.in` → `uv pip check` → record `requirements-$ENV_ARCH.txt` → package the image.
+**x64 build order:** base env → install `uv` → `requirements.in` → patched SmartRedis client → SmartSim 0.8.0 → `smart build` (RedisAI module, ML backends skipped) → restore `requirements.in` → `uv pip check` → record `requirements-x64.txt`.
+
+**arm64 build order:** same, minus the `smart build` step.
 
 Check the result:
 
@@ -614,13 +547,13 @@ python -m pip list --format=freeze \
     | grep -E '^(jax|numpy|onnx|protobuf|pydantic|loguru|pyinstrument|smartsim|smartredis)=='
 ```
 
-The expected ONNX version is `onnx==1.17.0`. Build the other architecture separately using its own Global Configuration (Section 1) and matching node (Section 4).
+Build the other architecture separately (Section 1 + Section 4).
 
 ---
 
 ## 6. Build the SmartRedis Native Library
 
-The SmartRedis Python client inside the Tykky environment is **not** sufficient for OpenFOAM/C++/Fortran linkage — build the native library separately, on the same architecture as the solver runtime.
+Needed on **both** architectures for OpenFOAM/C++/Fortran linkage — this is a separate CMake build, unrelated to `smart build`/RedisAI, so it's unaffected by the ARM64 issue above.
 
 Request a node (Section 4), then:
 
@@ -628,7 +561,7 @@ Request a node (Section 4), then:
 module purge
 ```
 
-Load compilers matching your target system, e.g. for Roihu:
+Compilers, e.g. Roihu:
 
 ```bash
 module load gcc/13.4.0
@@ -648,9 +581,6 @@ Clone and patch:
 
 ```bash
 cd "$BASE_SCRATCH"
-
-echo "This will remove only this native SmartRedis directory:"
-echo "$SMARTREDIS_DIR"
 rm -rf "$SMARTREDIS_DIR"
 
 git clone \
@@ -665,7 +595,7 @@ grep -q '#include <cstdint>' src/cpp/tensorpack.cpp || \
 rm -rf build install
 ```
 
-Build the C++, C, and Fortran libraries:
+Build:
 
 ```bash
 env \
@@ -680,12 +610,10 @@ Verify:
 ```bash
 find "$SMARTREDIS_DIR/install" -maxdepth 3 -type f | sort
 
-# If lib64 does not exist on the target system, replace lib64 with lib.
+# If lib64 doesn't exist, use lib.
 ls -la "$SMARTREDIS_DIR/install/lib64"
-
 test -f "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so" \
     && echo "SmartRedis Fortran library installed successfully."
-
 ldd "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so"
 ```
 
@@ -699,7 +627,6 @@ cat <<'EOF' > "$BASE_SCRATCH/Python4SmartSim.sh"
 
 if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
     echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
-    echo "Run Section 0 of the SmartSim Environment Configuration guide first."
     return 1
 fi
 
@@ -734,7 +661,7 @@ module load gcc/13.4.0
 
 export PATH="$ENV_PREFIX/bin:$PATH"
 
-# If lib64 does not exist on the target system, replace lib64 with lib.
+# If lib64 doesn't exist, use lib.
 export LD_LIBRARY_PATH="$SMARTREDIS_DIR/install/lib64:${LD_LIBRARY_PATH:-}"
 export CMAKE_PREFIX_PATH="$SMARTREDIS_DIR/install:${CMAKE_PREFIX_PATH:-}"
 
@@ -754,24 +681,19 @@ EOF
 chmod +x "$BASE_SCRATCH/Python4SmartSim.sh"
 ```
 
-Edit the `gcc/...` module line inside the file to match the compiler used for your native SmartRedis build, then load it — no other manual editing needed, since the script sources your identity file from Section 0:
+Edit the `gcc/...` line to match your compiler, then load:
 
 ```bash
-nano "$BASE_SCRATCH/Python4SmartSim.sh"   # only if the GCC module needs changing
-
 source "$BASE_SCRATCH/Python4SmartSim.sh"
-
 echo "$PYTHON_ROOT"; echo "$ENV_PREFIX"; echo "$SMARTREDIS_DIR"
 python --version
-echo "$LD_LIBRARY_PATH"
-echo "$CMAKE_PREFIX_PATH"
 ```
 
 ---
 
 ## 8. Register the Jupyter Kernel
 
-Run once **per architecture**, after sourcing the loader on that architecture:
+Run once per architecture:
 
 ```bash
 source "$BASE_SCRATCH/Python4SmartSim.sh"
@@ -786,13 +708,10 @@ cat <<EOF > "$JUPYTER_KERNEL_DIR/kernel.json"
 }
 EOF
 
-cat "$JUPYTER_KERNEL_DIR/kernel.json"
 jupyter kernelspec list
 ```
 
-Remove an obsolete kernel: `jupyter kernelspec uninstall -f <kernel_name>`.
-
-Then in VS Code: **Command Palette → Developer: Reload Window**.
+Remove an obsolete kernel: `jupyter kernelspec uninstall -f <kernel_name>`. In VS Code: **Command Palette → Developer: Reload Window**.
 
 ---
 
@@ -807,24 +726,15 @@ import jax
 import equinox as eqx
 import numpy as np
 from importlib.metadata import version
-from smartsim._core.config import CONFIG
 
 print(f'Python:       {sys.version.split()[0]}')
 print(f'SmartSim:     {version(\"smartsim\")}')
 print(f'SmartRedis:   {version(\"smartredis\")}')
 print(f'JAX:          {jax.__version__}  backend={jax.default_backend()}  devices={jax.devices()}')
 print(f'Equinox:      {eqx.__version__}')
-print(f'ONNX:         {version(\"onnx\")}')
 print(f'NumPy:        {np.__version__}')
-print(f'protobuf:     {version(\"protobuf\")}')
-print(f'pydantic:     {version(\"pydantic\")}')
-print(f'loguru:       {version(\"loguru\")}')
-print(f'pyinstrument: {version(\"pyinstrument\")}')
-print(f'DB Exec:      {CONFIG.database_exe}')
 "
 ```
-
-Scientific/SmartSim import check:
 
 ```bash
 python -c "
@@ -834,94 +744,52 @@ print('Core SmartSim, ML, and scientific packages imported successfully.')
 "
 ```
 
-**pydantic / loguru** quick sanity check:
-
-```bash
-python - <<'PY'
-from pydantic import BaseModel
-from loguru import logger
-
-class ProducerConfig(BaseModel):
-    n_workers: int
-    db_host: str = "localhost"
-
-cfg = ProducerConfig(n_workers=4)
-logger.info(f"Loaded config: {cfg}")
-PY
-```
-
-**pyinstrument** quick profiling check:
-
-```bash
-python -m pyinstrument -m pytest --collect-only -q
-```
-
-Dependency and database health:
-
 ```bash
 uv pip check
+```
+
+**On x64 only** — the Orchestrator was built here, so:
+
+```bash
+python -c "from smartsim._core.config import CONFIG; print(CONFIG.database_exe)"
 smart validate --device cpu
 ```
 
-Missing ONNXRuntime, PyTorch, or TensorFlow backends here is expected. The RedisAI module itself should be present because the SmartSim Orchestrator requires it for database startup.
+Missing ONNXRuntime/PyTorch/TensorFlow is expected; the RedisAI module itself should be present.
 
-Native library and CMake check:
+**On arm64** — there is no local Orchestrator; skip `smart validate`. Instead confirm the client can reach a running x64 Orchestrator:
 
 ```bash
-# If lib64 does not exist on the target system, replace lib64 with lib.
-ls -la "$SMARTREDIS_DIR/install/lib64"
+python - <<'PY'
+from smartredis import Client
+client = Client(address="X64_HOST:6379", cluster=False)  # replace X64_HOST
+print("Connected:", client.get_db_node_info(["X64_HOST:6379"]))
+PY
+```
 
+Native library check (both architectures):
+
+```bash
+ls -la "$SMARTREDIS_DIR/install/lib64"
 test -f "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so" \
     && echo "SmartRedis Fortran library is available."
-
 ldd "$SMARTREDIS_DIR/install/lib64/libsmartredis-fortran.so"
-
-find "$SMARTREDIS_DIR/install/share/cmake" -maxdepth 3 -type f | sort
 ```
-
-Installed vs. recorded versions:
-
-```bash
-python -m pip list --format=freeze
-head -n 40 "$PYTHON_ROOT/requirements-$ENV_ARCH.txt"
-```
-
-To validate the complete data path, run a SmartSim/SmartRedis tensor-exchange test on a compute node, with the model executing in a Python/JAX producer or consumer process rather than inside RedisAI.
 
 ---
 
 ## 10. Dependency File Workflow
 
 ```text
-requirements.in            Human-maintained direct dependencies and compatibility constraints (not SmartSim itself)
-requirements-$ENV_ARCH.txt Installed-state snapshot after a successful build (excludes SmartSim/SmartRedis)
+requirements.in            Human-maintained direct dependencies (not SmartSim itself)
+requirements-$ENV_ARCH.txt Installed-state snapshot (excludes SmartSim/SmartRedis)
 ```
 
-**Add a package** — append it to `requirements.in`, then rebuild/update (Section 11 or 12):
+**Add/remove a package** — edit `requirements.in`, then rebuild/update (Section 11 or 12). Removing a package needs a full rebuild to drop unused transitive deps.
 
-```bash
-nano -m "$PYTHON_ROOT/requirements.in"
-```
+**Preserve these pins** unless deliberately revalidating: `numpy<2.0.0`, `jax[cuda12]==0.6.2`, `onnx==1.17.0`, `protobuf==3.20.3` (and in `base4SmartSim.yml`: `python=3.11`, `cmake<3.30.0`).
 
-**Remove a package** — delete its line, then do a full rebuild (Section 12) so unused transitive dependencies are also dropped.
-
-**Preserve these compatibility constraints** unless you're deliberately revalidating the whole stack:
-
-```text
-numpy<2.0.0
-jax[cuda12]==0.6.2
-onnx==1.17.0
-protobuf==3.20.3
-```
-
-...and in `base4SmartSim.yml`:
-
-```text
-python=3.11
-cmake<3.30.0
-```
-
-**Reproduce an exact installed set** — temporarily point *both* `uv pip install --requirements ...` lines in `extra4SmartSim.sh` at `requirements-$ENV_ARCH.txt` instead of `requirements.in`, rebuild, then switch back. The patched SmartRedis client and SmartSim still install from source regardless.
+**Reproduce an exact installed set** — temporarily point `extra4SmartSim.sh`'s two `uv pip install --requirements ...` lines at `requirements-$ENV_ARCH.txt`, rebuild, then switch back.
 
 ---
 
@@ -940,125 +808,67 @@ export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
 export UV_CONCURRENT_DOWNLOADS=4
-
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
 python -m pip install --no-cache-dir uv
 
-# Install the complete constrained dependency set
 uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
-# Explicitly upgrade packages requested through smartsim-update
 UPDATE_REQUEST="$PYTHON_ROOT/.smartsim-update-$ENV_ARCH.txt"
-
 if [ -s "$UPDATE_REQUEST" ]; then
     mapfile -t UPDATE_PACKAGES < "$UPDATE_REQUEST"
-
-    uv pip install \
-        --link-mode=copy \
-        --upgrade \
-        "${UPDATE_PACKAGES[@]}"
+    uv pip install --link-mode=copy --upgrade "${UPDATE_PACKAGES[@]}"
 fi
 
-# Install the patched SmartRedis Python client
 rm -rf "$CW_BUILD_TMPDIR/SmartRedis"
-
 git clone \
     https://github.com/boss507104/SmartRedis.git \
     "$CW_BUILD_TMPDIR/SmartRedis"
-
 cd "$CW_BUILD_TMPDIR/SmartRedis"
 
 grep -q '#include <cstdint>' src/cpp/tensorpack.cpp || \
     sed -i '30i #include <cstdint>' src/cpp/tensorpack.cpp
 
-OLD_CFLAGS="${CFLAGS-}"
-OLD_CXXFLAGS="${CXXFLAGS-}"
-OLD_CPPFLAGS="${CPPFLAGS-}"
-OLD_LDFLAGS="${LDFLAGS-}"
-
+OLD_CFLAGS="${CFLAGS-}"; OLD_CXXFLAGS="${CXXFLAGS-}"
+OLD_CPPFLAGS="${CPPFLAGS-}"; OLD_LDFLAGS="${LDFLAGS-}"
 unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
 
 python -m pip install --no-cache-dir .
 
-export CFLAGS="$OLD_CFLAGS"
-export CXXFLAGS="$OLD_CXXFLAGS"
-export CPPFLAGS="$OLD_CPPFLAGS"
-export LDFLAGS="$OLD_LDFLAGS"
+export CFLAGS="$OLD_CFLAGS" CXXFLAGS="$OLD_CXXFLAGS"
+export CPPFLAGS="$OLD_CPPFLAGS" LDFLAGS="$OLD_LDFLAGS"
 
-# Install SmartSim only after SmartRedis
-uv pip install \
-    --link-mode=copy \
-    smartsim==0.8.0
+uv pip install --link-mode=copy smartsim==0.8.0
 
-# Patch SmartSim architecture handling
-python - <<'PY'
-from pathlib import Path
-import json
-import smartsim
+# Rebuild the Orchestrator — x64 ONLY. See extra4SmartSim.sh for why.
+if [ "$ENV_ARCH" = "x64" ]; then
+    export USE_SYSTEMD=no
 
-smartsim_root = Path(smartsim.__file__).resolve().parent
+    env CFLAGS="-Wno-incompatible-pointer-types" \
+        CXXFLAGS="-Wno-incompatible-pointer-types" \
+        USE_SYSTEMD=no \
+        smart clobber
 
-platform_file = smartsim_root / "_core" / "_install" / "platform.py"
-text = platform_file.read_text()
-text = text.replace('    AARCH64 = "aarch64"\n', '')
+    env CFLAGS="-Wno-incompatible-pointer-types" \
+        CXXFLAGS="-Wno-incompatible-pointer-types" \
+        USE_SYSTEMD=no \
+        smart build \
+            --device cpu \
+            --skip-torch \
+            --skip-tensorflow \
+            --skip-onnx
+else
+    echo "Skipping smart build (Orchestrator/RedisAI) on $ENV_ARCH."
+fi
 
-if 'if string == "aarch64":' not in text:
-    text = text.replace(
-        '        return cls(string)\n',
-        '        if string == "aarch64":\n'
-        '            string = "arm64"\n'
-        '        return cls(string)\n',
-        1,
-    )
-
-platform_file.write_text(text)
-
-config_dir = smartsim_root / "_core" / "_install" / "configs" / "mlpackages"
-config_file = config_dir / "linux-arm64-cpu.json"
-
-config = {
-    "platform": {
-        "operating_system": "linux",
-        "architecture": "arm64",
-        "device": "cpu",
-    },
-    "ml_packages": [],
-}
-
-config_file.write_text(json.dumps(config, indent=4) + "\n")
-PY
-
-# Rebuild Redis and the RedisAI module without ML runtime backends
-# (see the matching comment in extra4SmartSim.sh)
-export USE_SYSTEMD=no
-
-env \
-    CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart clobber
-
-env \
-    CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart build \
-        --device cpu \
-        --skip-torch \
-        --skip-tensorflow \
-        --skip-onnx
-
-# Restore the constrained dependency set after smart build
 uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
 uv pip check
 
-# Record the installed package state
 python -m pip list --format=freeze \
     | grep -v '^smartredis==' \
     | grep -v '^smartsim==' \
@@ -1073,7 +883,7 @@ EOF
 chmod +x "$PYTHON_ROOT/update4SmartSim.sh"
 ```
 
-Create the `smartsim-update` command:
+Create `smartsim-update`:
 
 ```bash
 mkdir -p "$HOME/bin"
@@ -1089,7 +899,6 @@ fi
 
 if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
     echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
-    echo "Run Section 0 of the SmartSim Environment Configuration guide first."
     exit 1
 fi
 
@@ -1100,16 +909,9 @@ export PYTHON_BASE="$BASE_SCRATCH/Python"
 export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
 
 case "$(uname -m)" in
-    x86_64)
-        export ENV_ARCH="x64"
-        ;;
-    aarch64)
-        export ENV_ARCH="arm64"
-        ;;
-    *)
-        echo "Unsupported architecture: $(uname -m)"
-        exit 1
-        ;;
+    x86_64) export ENV_ARCH="x64" ;;
+    aarch64) export ENV_ARCH="arm64" ;;
+    *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
 
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.11-$ENV_ARCH"
@@ -1117,23 +919,15 @@ export TMP_BUILD_DIR="$BASE_SCRATCH/.tykky_runtime_smartsim_$ENV_ARCH"
 export UPDATE_REQUEST="$PYTHON_ROOT/.smartsim-update-$ENV_ARCH.txt"
 
 if [ ! -d "$ENV_PREFIX" ]; then
-    echo "Environment not found:"
-    echo "$ENV_PREFIX"
-    exit 1
+    echo "Environment not found: $ENV_PREFIX"; exit 1
 fi
 
 if [ ! -f "$PYTHON_ROOT/requirements.in" ]; then
-    echo "requirements.in not found:"
-    echo "$PYTHON_ROOT/requirements.in"
-    exit 1
+    echo "requirements.in not found: $PYTHON_ROOT/requirements.in"; exit 1
 fi
 
 for package in "$@"; do
-    package_name="$(
-        printf '%s\n' "$package" |
-        sed -E 's/\[.*//; s/[<>=!~].*//'
-    )"
-
+    package_name="$(printf '%s\n' "$package" | sed -E 's/\[.*//; s/[<>=!~].*//')"
     case "$package_name" in
         smartsim|smartredis)
             echo "$package_name is managed separately and must not be added to requirements.in."
@@ -1145,8 +939,7 @@ done
 printf '%s\n' "$@" > "$UPDATE_REQUEST"
 
 python - "$PYTHON_ROOT/requirements.in" "$@" <<'PY'
-import re
-import sys
+import re, sys
 from pathlib import Path
 
 requirements_file = Path(sys.argv[1])
@@ -1159,19 +952,15 @@ def package_name(spec):
 for spec in requested:
     name = package_name(spec)
     replaced = False
-
     for index, line in enumerate(lines):
         stripped = line.strip()
-
         if not stripped or stripped.startswith("#") or " @ " in stripped:
             continue
-
         if package_name(stripped) == name:
             lines[index] = spec
             replaced = True
             print(f"Updated requirement: {spec}")
             break
-
     if not replaced:
         lines.append(spec)
         print(f"Added requirement: {spec}")
@@ -1184,23 +973,13 @@ module load tykky
 
 export TMPDIR="$TMP_BUILD_DIR"
 export CW_BUILD_TMPDIR="$TMP_BUILD_DIR"
-
 mkdir -p "$TMP_BUILD_DIR"
-
-echo
-echo "Architecture: $ENV_ARCH"
-echo "Environment:  $ENV_PREFIX"
-echo "Packages:     $*"
-echo
 
 conda-containerize update \
     --post-install "$PYTHON_ROOT/update4SmartSim.sh" \
     "$ENV_PREFIX"
 
-echo
-echo "Update completed."
-echo "Recorded packages:"
-echo "$PYTHON_ROOT/requirements-$ENV_ARCH.txt"
+echo "Update completed. Recorded packages: $PYTHON_ROOT/requirements-$ENV_ARCH.txt"
 EOF
 
 chmod +x "$HOME/bin/smartsim-update"
@@ -1209,74 +988,35 @@ chmod +x "$HOME/bin/smartsim-update"
 ```bash
 grep -qxF 'export PATH="$HOME/bin:$PATH"' ~/.bashrc || \
     echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
-
 source ~/.bashrc
 ```
 
-Request the **same architecture** node (Section 4), load Tykky, and apply:
+Apply on the matching architecture node:
 
 ```bash
 smartsim-update pydantic
 smartsim-update loguru pyinstrument
-smartsim-update "tensorflow>=2.20"
-smartsim-update scipy
 ```
 
-Reload and check:
-
-```bash
-source "$BASE_SCRATCH/Python4SmartSim.sh"
-
-uv pip check
-```
-
-Updating the Tykky environment does **not** rebuild the separate native SmartRedis library under `$SMARTREDIS_DIR` — rebuild that separately (Section 6) if its source, compiler, or ABI changes.
+Updating does **not** rebuild the native SmartRedis library — rebuild that separately (Section 6) if its source, compiler, or ABI changes.
 
 ---
 
 ## 12. Rebuild / Clean Reinstall
 
-Same steps for a routine rebuild and a from-scratch install — the only difference is whether `$PYTHON_ROOT`'s files already exist.
-
 ```bash
 # 1) Run the matching Global Configuration block (Section 1) first.
+echo "ENV_ARCH=$ENV_ARCH"; echo "ENV_PREFIX=$ENV_PREFIX"; echo "SMARTREDIS_DIR=$SMARTREDIS_DIR"
 
-# 2) Confirm targets
-echo "ENV_ARCH=$ENV_ARCH"
-echo "PYTHON_ROOT=$PYTHON_ROOT"
-echo "ENV_PREFIX=$ENV_PREFIX"
-echo "SMARTREDIS_DIR=$SMARTREDIS_DIR"
-echo "TMP_BUILD_DIR=$TMP_BUILD_DIR"
-
-# 3) Wipe old Tykky env + build cache
 rm -rf "$ENV_PREFIX" "$TMP_BUILD_DIR"
 mkdir -p "$PYTHON_ROOT/envs" "$TMP_BUILD_DIR"
+# For a full clean install, also: rm -rf "$SMARTREDIS_DIR"
 
-# Only for a full clean install, also remove the native SmartRedis build:
-# rm -rf "$SMARTREDIS_DIR"
-
-# 4) Confirm config files exist (Section 3), then chmod the post-install script
 ls -l "$PYTHON_ROOT/base4SmartSim.yml" "$PYTHON_ROOT/requirements.in" "$PYTHON_ROOT/extra4SmartSim.sh"
 chmod +x "$PYTHON_ROOT/extra4SmartSim.sh"
 ```
 
-Request a node (Section 4), then build (Section 5):
-
-```bash
-module purge
-module load tykky
-export TMPDIR="$TMP_BUILD_DIR"
-export CW_BUILD_TMPDIR="$TMP_BUILD_DIR"
-
-conda-containerize new \
-    --prefix "$ENV_PREFIX" \
-    --post-install "$PYTHON_ROOT/extra4SmartSim.sh" \
-    "$PYTHON_ROOT/base4SmartSim.yml"
-```
-
-If you removed `$SMARTREDIS_DIR`, rebuild it too (Section 6). If `Python4SmartSim.sh` doesn't exist yet, create it (Section 7).
-
-Rebuild `$SMARTREDIS_DIR` specifically whenever: the SmartRedis source changes, the compiler module changes, the target CSC system changes, the C++/C/Fortran ABI changes, or native linkage errors appear.
+Request a node (Section 4), then build (Section 5). If you removed `$SMARTREDIS_DIR`, rebuild it too (Section 6).
 
 ---
 
@@ -1286,96 +1026,83 @@ Rebuild `$SMARTREDIS_DIR` specifically whenever: the SmartRedis source changes, 
 ```bash
 rm -rf "$ENV_PREFIX" "$TMP_BUILD_DIR"
 mkdir -p "$TMP_BUILD_DIR"
-# rm -rf "$SMARTREDIS_DIR"   # only if a native rebuild is also needed
 ```
-Then rebuild per Section 12 on the matching architecture.
+Rebuild per Section 12.
 
-**`requirements-$ENV_ARCH.txt` missing** — it's only written after packages, the SmartRedis client, the SmartSim database build, dependency restoration, and `uv pip check` all succeed. Run a full build (Section 5).
+**`requirements-$ENV_ARCH.txt` missing** — only written after a successful build; run Section 5.
 
-**Package resolution fails** — edit `requirements.in`, keep the pins (`numpy<2.0.0`, `jax[cuda12]==0.6.2`, `onnx==1.17.0`, `protobuf==3.20.3`), never add `smartsim==0.8.0` there, and rebuild.
+**Package resolution fails** — keep the pins, never add `smartsim==0.8.0` to `requirements.in`.
 
-**SmartRedis PyPI source build fails on ARM64** — errors like missing `EnableCoverage`/`Config.smartredis.cmake.in` usually mean `smartsim==0.8.0` got installed too early via `requirements.in`. Keep it out of `requirements.in`; the patched SmartRedis client must install first.
+**SmartRedis PyPI source build fails on ARM64** — usually means `smartsim==0.8.0` got installed too early; keep it out of `requirements.in`.
 
-**`smart build --device cpu` reports no valid device choices on ARM64** — Python reports `aarch64` but SmartSim expects `arm64` internally, and ships no Linux ARM64 CPU platform JSON. `extra4SmartSim.sh` patches the alias and adds a minimal `linux + arm64 + cpu` config with `ml_packages = []`, enabling an Orchestrator-capable build with the RedisAI module but without ONNXRuntime, PyTorch, or TensorFlow model-execution backends.
+**`dlpack/dlpack.h: No such file or directory` during `smart build`** — this is why RedisAI is x64-only in this guide. If you deliberately want to attempt an ARM64 Orchestrator build anyway, RedisAI's dependency-fetch script would need to be patched separately from SmartSim's own `platform.py` (a different codebase); this guide does not attempt that.
 
-**`jax2onnx` reports an incompatible ONNX version** — keep `onnx==1.17.0` in `requirements.in`, and make sure `extra4SmartSim.sh` reapplies `requirements.in` plus `uv pip check` after `smart build`. Don't remove that final check.
+**`jax2onnx` reports an incompatible ONNX version** — keep `onnx==1.17.0`; make sure `extra4SmartSim.sh` reapplies `requirements.in` + `uv pip check` after any build step.
 
-**uv reports a hardlink warning** — use `--link-mode=copy` on every `uv pip install`, since the uv cache and Tykky build environment are on different filesystems.
+**`smart build` rejects `--skip-torch`/`--skip-tensorflow`/`--skip-onnx`** — flag names have changed across SmartSim doc revisions. Run `smart build --help` inside the build environment (after `smart clobber`) to get the ground-truth flags for whatever version is installed, and update both scripts accordingly.
 
-**Package downloads are slow** — `UV_CONCURRENT_DOWNLOADS=4` caps concurrency; total time still depends on the compute node's network path to external servers. See the login-node tip in Section 4.
+**uv hardlink warning** — expected; `--link-mode=copy` handles it.
 
-**Home quota exceeded during build** — confirm Section 1's Global Configuration ran first; caches redirect to `$BASE_SCRATCH/.tykky_runtime_smartsim_x64` / `_arm64`, not `$HOME`.
+**Home quota exceeded during build** — confirm Section 1 ran; caches redirect to `$BASE_SCRATCH/.tykky_runtime_smartsim_*`, not `$HOME`.
 
-**Architecture mismatch** (e.g. `the image's architecture (amd64) could not run on the host's (arm64)`) — build and use the matching-architecture Tykky environment and native SmartRedis library; there's no cross-architecture container.
+**Architecture mismatch** — build and use the matching-architecture Tykky environment and native library; no cross-architecture container.
 
-**JAX reports no GPU** — the loader sets `JAX_PLATFORMS=cpu` on x64 and `JAX_PLATFORMS=cuda` on arm64 automatically. Avoid manually setting `JAX_PLATFORMS=gpu`. GPU execution also needs an actual GPU allocation.
+**JAX reports no GPU** — loader sets `JAX_PLATFORMS` automatically; avoid `JAX_PLATFORMS=gpu`.
 
-**SmartSim can't locate the database executable:**
-```bash
-python -c "from smartsim._core.config import CONFIG; print(CONFIG.database_exe)"
-```
-Rebuild it:
-```bash
-export USE_SYSTEMD=no
-smart clobber
-smart build --device cpu --skip-torch --skip-tensorflow --skip-onnx
-```
-then restore packages: `uv pip install --link-mode=copy --requirements "$PYTHON_ROOT/requirements.in" && uv pip check`.
+**SmartSim can't locate the database executable (x64 only)** — rebuild: `smart clobber && smart build --device cpu --skip-torch --skip-tensorflow --skip-onnx`, then restore packages and `uv pip check`.
 
-**SmartRedis native library not found** — check `$LD_LIBRARY_PATH`, confirm files under `$SMARTREDIS_DIR/install/lib64` (or `lib`), and re-source `Python4SmartSim.sh`.
+**arm64 client can't reach the x64 Orchestrator** — confirm the x64 Orchestrator is actually running and reachable on the network path between the two node types; check the address/port passed to `smartredis.Client`.
 
-**SmartRedis shared library dependencies missing** — run `ldd` on `libsmartredis-fortran.so`; any `not found` entry means the compiler runtime module isn't loaded. Load the same GCC module used for the native build and re-source the loader.
+**SmartRedis native library not found** — check `$LD_LIBRARY_PATH`, confirm files under `install/lib64` (or `lib`), re-source the loader.
 
-**SmartRedis compiler errors** — check `module list`, `gcc --version`, `gfortran --version`, `cmake --version`; confirm the `<cstdint>` patch is present in `tensorpack.cpp`; `rm -rf build install` and rebuild (Section 6).
+**SmartRedis compiler errors** — check `module list`, `gcc/gfortran/cmake --version`; confirm the `<cstdint>` patch is present; `rm -rf build install` and rebuild (Section 6).
 
-**SmartSim reports incompatible pointer errors** — rebuild with `CFLAGS`/`CXXFLAGS` set to `-Wno-incompatible-pointer-types` as shown in Section 5/11, then restore `requirements.in` and run `uv pip check`.
+**Import errors after an update** — run `uv pip check`; prefer a full rebuild (Section 12) over stacking updates.
 
-**Import errors after an update** — run `uv pip check`, compare `pip list --format=freeze` against `requirements-$ENV_ARCH.txt`; prefer a full rebuild (Section 12) over stacking further incremental updates once things look inconsistent.
-
-**`ENV_PREFIX not found` right after migrating from the old layout** — you probably sourced `Python4SmartSim.sh` before finishing Section 1.3's `mv` step, or moved only part of `envs/`. Re-check `$PYTHON_ROOT/envs/` contains the full environment directory, then re-source the loader.
-
-**Loader or `smartsim-update` exits immediately with "Identity file not found"** — `$HOME/.config/csc-hpc/identity.sh` doesn't exist yet, or hasn't been filled in. Go back to Section 0, create/edit it, then re-source the loader or re-run `smartsim-update`. If you already set this up for the ML stack, make sure you haven't accidentally deleted or moved that file.
+**Identity file not found** — go back to Section 0.
 
 ---
 
 ## 14. SmartSim Deployment Track
 
-This environment is the software foundation for coupled multi-physics simulations where parallel solvers exchange tensors, model weights, metrics, and predictions through SmartRedis. Typical workflows:
+Typical shape of a coupled run:
 
-* running the SmartSim Orchestrator on node-local storage;
-* launching OpenFOAM solvers, Python producers, and Python consumers through Slurm;
-* exchanging model weights, input/output tensors, metrics, and predictions through SmartRedis;
-* running JAX / Equinox training or inference in external Python producer/consumer processes;
-* using SmartRedis as the communication layer between OpenFOAM, Python workers, and monitoring tools;
-* exchanging distributed CFD fields through the Redis database;
-* linking external C++ or Fortran solvers against the native SmartRedis client;
-* validating producer/consumer configuration with `pydantic` models before a run starts, logging the coupled pipeline with `loguru`, and profiling slow exchange loops with `pyinstrument`.
+```text
+x64 CPU node                          arm64 GPU node
+└─ SmartSim Orchestrator              └─ SmartRedis client
+   (Redis + RedisAI module)              └─ JAX / Equinox training & inference
+   └─ tensor/weight/metric storage        └─ get_tensor() / put_tensor() over the network
+```
 
-RedisAI model execution (`set_model`, `set_model_from_file`, `run_model`) is not part of the default workflow because no model-execution backend such as ONNXRuntime, PyTorch, or TensorFlow is built. The full production architecture, Slurm templates, database placement strategies, and model-injection examples are maintained in [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
+The Orchestrator never executes the model — it's purely the exchange point. A GPU-side worker looks roughly like:
+
+```python
+from smartredis import Client
+import jax.numpy as jnp
+
+client = Client(address="x64-node-address:6379", cluster=False)
+x = jnp.asarray(client.get_tensor("training_data"))
+result = jax_function(x)          # runs on the GPU
+client.put_tensor("result", result)
+```
+
+Avoid calling `get_tensor`/`put_tensor` every training step for large datasets — network transfer between the x64 database and the GPU node dominates otherwise. Instead: pull the dataset (or a large chunk) once, keep it in GPU memory for many training steps, and only write small results (metrics, checkpoints, predictions) back through SmartRedis.
+
+Other typical workflows: launching OpenFOAM solvers + Python producers/consumers through Slurm; linking external C++/Fortran solvers against the native SmartRedis client; validating producer/consumer config with `pydantic`, logging with `loguru`, profiling with `pyinstrument`.
+
+RedisAI model execution (`set_model`, `run_model`) is not used in this workflow — model computation happens in the JAX worker, not inside RedisAI. Full production architecture and Slurm templates: [SmartSim4CSC](https://github.com/boss507104/SmartSim4CSC).
 
 ---
 
 ## Notes
 
-* Python 3.11, built separately per architecture (x64, arm64) — never mix containers across architectures.
-* `Harry` / `Dumbledore` / `project_xxxxxxx` are fictional placeholders — set them **exactly once** in `$HOME/.config/csc-hpc/identity.sh` (Section 0). Every other script (Global Configuration, `Python4SmartSim.sh`, `smartsim-update`) sources that file automatically, so there's nothing left to edit by hand downstream. This identity file is shared with the ML stack, if you have one.
-* `ENV_ARCH` is intentionally excluded from the identity file — it's chosen explicitly per build in Global Configuration, and auto-detected via `uname -m` in the loader and `smartsim-update`.
-* `PROJECT_USER_DIR` is not necessarily your CSC login username.
-* `PYTHON_BASE` (`$BASE_SCRATCH/Python`) is the shared parent for both the SmartSim and ML stacks; `PYTHON_ROOT` (`$PYTHON_BASE/PythonSmartSim`) is the SmartSim-specific subtree — keep `requirements.in`, `envs/`, and update scripts strictly under `PYTHON_ROOT`. **Do not merge with the ML stack** (`PythonML/`) — NumPy/protobuf pins conflict.
-* `requirements.in` = direct deps + constraints, *not* SmartSim itself; `requirements-$ENV_ARCH.txt` = installed-state snapshot excluding SmartSim/SmartRedis, not a separately compiled lockfile.
-* The patched SmartRedis Python client and SmartSim are always installed from source, in that order, on every build/update.
-* The default build includes the RedisAI module required by the SmartSim Orchestrator, but skips ONNXRuntime, PyTorch, and TensorFlow model-execution backends.
-* Preserve the JAX, ONNX, NumPy, protobuf, Python, and CMake compatibility pins unless deliberately revalidating the stack.
-* `requirements.in` is reapplied after `smart build`, followed by `uv pip check`, as a conservative restoration/validation step — don't skip either.
-* Every `uv pip install` uses `--link-mode=copy` (uv cache and Tykky target env are on different filesystems).
-* `pydantic` is used for typed config validation, `loguru` for structured logging, and `pyinstrument` for lightweight profiling across producer/consumer/orchestration scripts — none of the three interact with the SmartSim/SmartRedis build steps.
-* The SmartRedis Python client and the native SmartRedis library are separate builds serving separate purposes; the native library must be rebuilt on compiler/source/system/ABI changes.
-* Native libraries are expected under `install/lib64`; use `install/lib` if that's what your target system produces.
-* `CMAKE_PREFIX_PATH` points at the SmartRedis install prefix for downstream CMake projects.
-* `$SMARTREDIS_DIR` (`SmartRedis-x64/`, `SmartRedis-arm64/`) lives directly under `$BASE_SCRATCH`, outside the `Python/` subtree, since it's a native build artefact, not a Python package.
-* Missing ONNXRuntime/PyTorch/TensorFlow in `smart validate` is expected. RedisAI itself should not be missing, because the SmartSim Orchestrator depends on it for database startup.
-* Use compute nodes for installation, SmartSim database compilation, SmartRedis native compilation, and computational workloads; avoid large installs/builds on login nodes (see Section 4's download tip for the one exception).
-* Prefer a full rebuild over repeated incremental updates once the dependency set changes substantially.
-* If migrating from the old flat `Python/` layout, do the one-time move in Section 1.3 before sourcing the loader — do not run both layouts in parallel.
-* The identity file (Section 0) and the directory-layout migration (Section 1.3) are independent — you can adopt either one without the other.
-* **`smart build` rejects the flags in this guide with "unrecognized arguments"** — `smart build`'s accepted flags have changed between SmartSim doc revisions and possibly between patch releases. This guide currently uses `--skip-torch --skip-tensorflow --skip-onnx`, which worked against the `smartsim==0.8.0` CLI installed by this pipeline. If a future rebuild rejects these, run `smart build --help` inside the build environment (right after `smart clobber`, before the failing `smart build` call) to get the ground-truth flag list for whatever version actually got installed, and update both `extra4SmartSim.sh` and `update4SmartSim.sh` accordingly — do not trust cached documentation, including this guide, over that output.
+* Python 3.11, built separately per architecture — never mix containers across architectures.
+* **RedisAI/the Orchestrator is x64-only.** `smart build` is skipped entirely on arm64 (`extra4SmartSim.sh` / `update4SmartSim.sh` branch on `$ENV_ARCH`) because RedisAI's dependency fetch for `dlpack.h` doesn't complete on Linux ARM64 in this pipeline. arm64 environments are SmartRedis-client + JAX workers that connect to a remote x64 Orchestrator.
+* Placeholders (`Harry`/`Dumbledore`/`project_xxxxxxx`) are set once in the identity file (Section 0) and shared with the ML stack if you have one.
+* `PYTHON_ROOT` (`PythonSmartSim/`) must stay separate from the ML stack (`PythonML/`) — pin conflicts.
+* `requirements.in` = direct deps, not SmartSim itself; `requirements-$ENV_ARCH.txt` = installed-state snapshot, not a lockfile.
+* SmartRedis client + SmartSim package install identically on both architectures; only the Orchestrator build differs.
+* `requirements.in` is reapplied and `uv pip check` run after any build step, on both architectures — don't skip either.
+* Every `uv pip install` uses `--link-mode=copy`.
+* The native SmartRedis library (Section 6) is unrelated to `smart build`/RedisAI and is unaffected by the ARM64 issue — build it on both architectures as usual.
+* If `smart build`'s flags ever get rejected again, trust `smart build --help` from the actual installed CLI over any cached documentation, including this guide.
