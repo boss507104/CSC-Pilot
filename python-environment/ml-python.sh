@@ -261,16 +261,22 @@ diffrax
 distrax
 einops
 equinox
-jax2onnx
 jaxopt
 jaxtyping
 lineax
-onnx
 optax
 optimistix
 sympy2jax
 
+# --- ONNX conversion and Runtime
+onnx
+onnxruntime
+jax2onnx
+skl2onnx
+tf2onnx
+
 # --- Machine Learning ---
+tensorflow
 catboost
 feature-engine
 gymnasium
