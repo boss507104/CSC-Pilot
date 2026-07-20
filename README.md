@@ -1,6 +1,7 @@
 # CSC HPC Guide
 
 **Last updated:** 20 July 2026
+
 **Written by:**
 Aalto University
 Department of Energy and Mechanical Engineering
