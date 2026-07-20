@@ -1,109 +1,98 @@
 #!/bin/bash
 # smartsim-python.sh
-# Interactive installer for the SmartSim Tykky environment + native SmartRedis
-# library + smartsim-update command + Jupyter kernel registration
-# (Sections 0, 1, 3, 5, 6, 7, 8, 11 only).
-# Intended location: /scratch/$CSC_PROJECT/$PROJECT_USER_DIR/smartsim-python.sh
-# Intended to be run directly on the LOGIN NODE, per explicit request.
+# Interactive installer for the unified Python 3.12 ML + SmartSim/SmartRedis
+# Tykky environment, native SmartRedis library, smartsim-update command,
+# PySR/Julia runtime setup, and Jupyter kernel registration.
 #
-# This script performs INSTALLATION ONLY. It intentionally skips:
-#   - Environment validation          (guide Section 9)
-#   - Dependency file workflow notes  (guide Section 10, doc only)
-#   - Rebuild / troubleshooting       (guide Sections 12-13)
-#   - Deployment track notes          (guide Section 14, doc only)
-# Those remain manual steps from the full guide if/when you need them.
+# Intended location:
+#   /scratch/$CSC_PROJECT/$PROJECT_USER_DIR/smartsim-python.sh
 #
-# Run this once per architecture (once on a CPU/login node for x64, once
-# on a Roihu GPU node for arm64) to match the guide's per-architecture
-# build + native library + kernel registration flow.
+# Run once per architecture:
+#   - x64:   Roihu CPU / Puhti / Mahti x86_64 node
+#   - arm64: Roihu GPU aarch64 node
 #
-# ARCHITECTURE SPLIT (current version):
-#   The Redis + RedisAI Orchestrator (`smart build`) is built on BOTH x64
-#   AND arm64. The earlier arm64 build failure was traced to two gaps in
-#   SmartSim 0.8.0 itself, not a fundamental RedisAI-on-ARM64 limitation:
-#     1. SmartSim ships a platform config for Darwin+ARM64+CPU, but none
-#        at all for Linux+ARM64+CPU.
-#     2. SmartSim's architecture-detection code never maps Linux's
-#        "aarch64" string to the internal "arm64" label it expects.
-#   Both gaps are patched on the installed SmartSim package, arm64 only,
-#   immediately after `smartsim==0.8.0` is installed and before
-#   `smart build` runs. DLPack's source definition (RedisAI/dlpack,
-#   v0.5_RAI) was already correct in SmartSim 0.8.0 — the dlpack.h fetch
-#   failure seen previously was a downstream symptom of the missing
-#   platform config, not a DLPack/ARM64 incompatibility.
+# SmartSim and SmartRedis install from the CSC-maintained csc-develop forks.
+# These forks already include Python 3.12 support, NumPy 2.x compatibility,
+# Linux ARM64 support, RedisAI TensorFlow/ONNX Runtime/LibTorch backends on
+# Linux ARM64, and the required SmartRedis compiler/source fixes.
 #
-# Build flags note (both architectures, history kept for reference):
-#   Attempt 1: --skip-backends --skip-python-packages   -> not real flags, rejected
-#   Attempt 2: --no_tf --no_pt                           -> not real flags, rejected
-#   Attempt 3 (current): --skip-torch --skip-tensorflow --skip-onnx
-#   This matches the flags documented for the CLI actually shipped with
-#   smartsim==0.8.0 as installed here. If this ever errors again with
-#   "unrecognized arguments", run `smart build --help` inside the build
-#   environment to get the ground-truth flag list for whatever version
-#   actually got installed, rather than trusting cached documentation.
+# No post-install source patching is performed.
+#
+# This script performs installation only. It skips the manual validation,
+# dependency-workflow notes, troubleshooting, and deployment examples from
+# the full guide.
 
 set -e
 
 echo "=================================================================="
-echo " SmartSim Environment Installer (login node, installation-only)"
+echo " Unified ML + SmartSim Environment Installer"
 echo "=================================================================="
 echo
-echo "WARNING: This build will run directly on the LOGIN NODE."
-echo "The full guide recommends compute nodes (srun/sinteractive) for"
-echo "BOTH the Tykky build AND native SmartRedis compilation, to avoid"
-echo "resource contention on shared login nodes. Proceeding anyway,"
-echo "per your request."
+echo "WARNING: This script runs the Tykky build and native SmartRedis"
+echo "compilation on the current node. Use a node with the target"
+echo "architecture and sufficient resources."
 echo
 
 # ------------------------------------------------------------------
-# Helper: prompt twice, require matching values, loop until they agree
+# Project number: double verification
 # ------------------------------------------------------------------
-prompt_confirmed() {
-    local prompt_text="$1"
-    local __resultvar="$2"
+prompt_project_number() {
     local first second
 
     while true; do
-        read -p "Type ${prompt_text}: " first
-        read -p "Type ${prompt_text} (verification): " second
+        read -r -p "Type project number: " first
+        read -r -p "Type project number (verification): " second
 
         if [ -z "$first" ]; then
-            echo "Value cannot be empty. Try again."
+            echo "Project number cannot be empty."
             echo
             continue
         fi
 
         if [ "$first" != "$second" ]; then
-            echo "Values did not match. Try again."
+            echo "Project numbers did not match. Try again."
             echo
             continue
         fi
 
-        printf -v "$__resultvar" '%s' "$first"
-        break
+        RAW_PROJECT="$first"
+        return
     done
 }
 
 # ------------------------------------------------------------------
-# Helper: architecture prompt with matching + normalisation
+# Single-entry prompt
 # ------------------------------------------------------------------
-prompt_architecture() {
-    local first second norm_first norm_second
+prompt_value() {
+    local prompt_text="$1"
+    local result_variable="$2"
+    local value
 
     while true; do
-        read -p "Type node or architecture (cpu / gpu / x64 / arm64): " first
-        read -p "Type node or architecture (verification): " second
+        read -r -p "${prompt_text}: " value
 
-        norm_first="$(echo "$first"  | tr '[:upper:]' '[:lower:]' | xargs)"
-        norm_second="$(echo "$second" | tr '[:upper:]' '[:lower:]' | xargs)"
-
-        if [ "$norm_first" != "$norm_second" ]; then
-            echo "Values did not match. Try again."
+        if [ -z "$value" ]; then
+            echo "Value cannot be empty."
             echo
             continue
         fi
 
-        case "$norm_first" in
+        printf -v "$result_variable" '%s' "$value"
+        return
+    done
+}
+
+# ------------------------------------------------------------------
+# Architecture prompt
+# ------------------------------------------------------------------
+prompt_architecture() {
+    local value
+
+    while true; do
+        read -r -p "Type node or architecture (cpu / gpu / x64 / arm64): " value
+        value="$(echo "$value" | tr '[:upper:]' '[:lower:]' | xargs)"
+
+        case "$value" in
             cpu|x64)
                 ENV_ARCH="x64"
                 return
@@ -113,7 +102,7 @@ prompt_architecture() {
                 return
                 ;;
             *)
-                echo "Invalid choice: '$first'. Enter one of: cpu, gpu, x64, arm64."
+                echo "Invalid choice. Enter cpu, gpu, x64, or arm64."
                 echo
                 ;;
         esac
@@ -121,32 +110,22 @@ prompt_architecture() {
 }
 
 # ------------------------------------------------------------------
-# Helper: target system prompt (drives GCC/CMake module selection
-# for the native SmartRedis build — see guide Section 6)
+# Target system prompt
 # ------------------------------------------------------------------
 prompt_system() {
-    local first second norm_first norm_second
+    local value
 
     while true; do
-        read -p "Type target system (roihu / mahti / puhti): " first
-        read -p "Type target system (verification): " second
+        read -r -p "Type target system (roihu / mahti / puhti): " value
+        value="$(echo "$value" | tr '[:upper:]' '[:lower:]' | xargs)"
 
-        norm_first="$(echo "$first"  | tr '[:upper:]' '[:lower:]' | xargs)"
-        norm_second="$(echo "$second" | tr '[:upper:]' '[:lower:]' | xargs)"
-
-        if [ "$norm_first" != "$norm_second" ]; then
-            echo "Values did not match. Try again."
-            echo
-            continue
-        fi
-
-        case "$norm_first" in
+        case "$value" in
             roihu|mahti|puhti)
-                TARGET_SYSTEM="$norm_first"
+                TARGET_SYSTEM="$value"
                 return
                 ;;
             *)
-                echo "Invalid choice: '$first'. Enter one of: roihu, mahti, puhti."
+                echo "Invalid choice. Enter roihu, mahti, or puhti."
                 echo
                 ;;
         esac
@@ -154,10 +133,10 @@ prompt_system() {
 }
 
 # ------------------------------------------------------------------
-# Step 1: Collect identity values (mirrors guide Section 0)
+# 1. Collect configuration
 # ------------------------------------------------------------------
 echo "--- Project identity ---"
-prompt_confirmed "project number" RAW_PROJECT
+prompt_project_number
 
 if [[ "$RAW_PROJECT" == project_* ]]; then
     CSC_PROJECT="$RAW_PROJECT"
@@ -165,46 +144,17 @@ else
     CSC_PROJECT="project_${RAW_PROJECT}"
 fi
 
-echo
-prompt_confirmed "project user directory name" PROJECT_USER_DIR
-
-echo
-prompt_confirmed "environment nickname" ENV_NICKNAME
+prompt_value "Type project user directory name" PROJECT_USER_DIR
+prompt_value "Type environment nickname" ENV_NICKNAME
 
 echo
 echo "--- Target architecture ---"
 prompt_architecture
 
 echo
-if [ "$ENV_ARCH" = "arm64" ]; then
-    echo "NOTE: arm64 selected. This build will patch SmartSim's Linux ARM64"
-    echo "platform detection (see the header comment in this script), then"
-    echo "run 'smart build' to compile the full Redis + RedisAI Orchestrator"
-    echo "locally, same as on x64."
-    echo
-fi
-
-echo "--- Target system (for GCC / CMake module selection) ---"
+echo "--- Target system ---"
 prompt_system
 
-echo
-echo "--- Summary ---"
-echo "CSC_PROJECT       = $CSC_PROJECT"
-echo "PROJECT_USER_DIR  = $PROJECT_USER_DIR"
-echo "ENV_NICKNAME      = $ENV_NICKNAME"
-echo "ENV_ARCH          = $ENV_ARCH"
-echo "TARGET_SYSTEM     = $TARGET_SYSTEM"
-if [ "$ENV_ARCH" = "arm64" ]; then
-    echo "Orchestrator build (smart build) = YES (Redis + RedisAI module, with Linux ARM64 platform patch)"
-else
-    echo "Orchestrator build (smart build) = YES (Redis + RedisAI module)"
-fi
-echo
-
-# ------------------------------------------------------------------
-# Step 2: Select GCC / CMake modules for the native SmartRedis build
-# (per guide Section 6's Roihu / Mahti examples)
-# ------------------------------------------------------------------
 case "$TARGET_SYSTEM" in
     roihu)
         GCC_MODULE="gcc/13.4.0"
@@ -221,60 +171,47 @@ case "$TARGET_SYSTEM" in
         LOAD_GIT_MODULE="yes"
         ;;
     puhti)
-        echo "The guide does not list default GCC/CMake modules for Puhti."
-        echo "Enter them manually (check 'module avail gcc' / 'module avail cmake' first)."
         echo
-        prompt_confirmed "GCC module (e.g. gcc/13.1.0)" GCC_MODULE
-        echo
-        prompt_confirmed "CMake module (e.g. cmake/3.28.6)" CMAKE_MODULE
+        echo "The guide does not define fixed Puhti compiler modules."
+        prompt_value "Type GCC module, for example gcc/13.1.0" GCC_MODULE
+        prompt_value "Type CMake module, for example cmake/3.28.6" CMAKE_MODULE
         LOAD_GIT_MODULE="yes"
         ;;
 esac
 
 echo
-echo "Selected GCC module:   $GCC_MODULE"
-echo "Selected CMake module: $CMAKE_MODULE"
+echo "--- Configuration ---"
+echo "CSC_PROJECT       = $CSC_PROJECT"
+echo "PROJECT_USER_DIR  = $PROJECT_USER_DIR"
+echo "ENV_NICKNAME      = $ENV_NICKNAME"
+echo "ENV_ARCH          = $ENV_ARCH"
+echo "TARGET_SYSTEM     = $TARGET_SYSTEM"
+echo "GCC_MODULE        = $GCC_MODULE"
+echo "CMAKE_MODULE      = $CMAKE_MODULE"
+echo "Python            = 3.12"
+echo "SmartSim fork     = PentagonToy/SmartSim @ csc-develop"
+echo "SmartRedis fork   = PentagonToy/SmartRedis @ csc-develop"
+echo "RedisAI backends  = TensorFlow + ONNX Runtime + LibTorch"
+echo "PySR / Julia      = resolved and precompiled during build"
 echo
 
-# ------------------------------------------------------------------
-# Step 3: Architecture sanity check (login node reality check)
-# ------------------------------------------------------------------
 HOST_ARCH="$(uname -m)"
 
 if [ "$ENV_ARCH" = "arm64" ] && [ "$HOST_ARCH" != "aarch64" ]; then
-    echo "WARNING: You selected arm64/gpu, but this login node reports"
-    echo "         architecture '$HOST_ARCH' (expected aarch64)."
-    echo
-    echo "The Tykky container AND the native SmartRedis library are"
-    echo "architecture-specific. Building either here will very likely"
-    echo "produce artefacts that do NOT run correctly on Roihu GPU nodes."
-    echo
-    read -p "Continue anyway? [y/N]: " CONFIRM_ARCH
-    case "$CONFIRM_ARCH" in
-        y|Y|yes|YES) ;;
-        *) echo "Aborted."; exit 1 ;;
-    esac
+    echo "WARNING: arm64 was selected, but this host reports '$HOST_ARCH'."
+    echo "The generated environment and native library would use the host"
+    echo "architecture rather than ARM64."
     echo
 fi
 
-if [ "$ENV_ARCH" = "x64" ] && [ "$HOST_ARCH" = "aarch64" ]; then
-    echo "WARNING: You selected cpu/x64, but this host reports architecture"
-    echo "         '$HOST_ARCH' (aarch64/ARM64), not x86_64."
-    echo
-    echo "Both the Tykky container and the native SmartRedis library are"
-    echo "built for whatever host they actually run on — building here"
-    echo "would produce ARM64 artefacts mislabelled as x64, which will"
-    echo "fail confusingly on a real x86_64 node later."
-    echo
-    read -p "Continue anyway? [y/N]: " CONFIRM_ARCH2
-    case "$CONFIRM_ARCH2" in
-        y|Y|yes|YES) ;;
-        *) echo "Aborted."; exit 1 ;;
-    esac
+if [ "$ENV_ARCH" = "x64" ] && [ "$HOST_ARCH" != "x86_64" ]; then
+    echo "WARNING: x64 was selected, but this host reports '$HOST_ARCH'."
+    echo "The generated environment and native library would use the host"
+    echo "architecture rather than x86_64."
     echo
 fi
 
-read -p "Proceed with installation using the values above? [y/N]: " CONFIRM_ALL
+read -r -p "Proceed with this configuration? [y/N]: " CONFIRM_ALL
 case "$CONFIRM_ALL" in
     y|Y|yes|YES) ;;
     *) echo "Aborted."; exit 1 ;;
@@ -282,44 +219,35 @@ esac
 echo
 
 # ------------------------------------------------------------------
-# Step 4: Write the shared identity file (guide Section 0)
+# 2. Identity file
 # ------------------------------------------------------------------
 echo "[1/10] Writing identity file..."
 
 mkdir -p "$HOME/.config/csc-hpc"
 
-if [ -f "$HOME/.config/csc-hpc/identity.sh" ]; then
-    echo "      Identity file already exists — overwriting with the values"
-    echo "      entered above. If you already set this up for the ML stack,"
-    echo "      or for the OTHER architecture of this SmartSim stack, make"
-    echo "      sure CSC_PROJECT/PROJECT_USER_DIR/ENV_NICKNAME still match."
-fi
-
 cat <<EOF > "$HOME/.config/csc-hpc/identity.sh"
-# --- USER CONFIGURATION START ---
 export CSC_PROJECT="$CSC_PROJECT"
 export PROJECT_USER_DIR="$PROJECT_USER_DIR"
 export ENV_NICKNAME="$ENV_NICKNAME"
-# --- USER CONFIGURATION END ---
 EOF
 
 chmod 600 "$HOME/.config/csc-hpc/identity.sh"
-echo "      -> $HOME/.config/csc-hpc/identity.sh"
+
+echo "      $HOME/.config/csc-hpc/identity.sh"
 echo
 
 # ------------------------------------------------------------------
-# Step 5: Global Configuration (guide Section 1.1 / 1.2)
+# 3. Global paths
 # ------------------------------------------------------------------
-echo "[2/10] Setting up paths..."
+echo "[2/10] Setting paths..."
 
 source "$HOME/.config/csc-hpc/identity.sh"
 
-export ENV_ARCH="$ENV_ARCH"
-
+export ENV_ARCH
 export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
 export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
-export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.11-$ENV_ARCH"
+export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export SMARTREDIS_DIR="$BASE_SCRATCH/SmartRedis-$ENV_ARCH"
 export TMP_BUILD_DIR="$BASE_SCRATCH/.tykky_runtime_smartsim_$ENV_ARCH"
 
@@ -333,28 +261,29 @@ echo "      TMP_BUILD_DIR=$TMP_BUILD_DIR"
 echo
 
 # ------------------------------------------------------------------
-# Step 6: Create configuration files (guide Section 3)
+# 4. Configuration files
 # ------------------------------------------------------------------
 echo "[3/10] Creating configuration files..."
-cd "$PYTHON_ROOT"
+
+mkdir -p "$PYTHON_ROOT"
 
 cat <<'EOF' > "$PYTHON_ROOT/base4SmartSim.yml"
 channels:
   - conda-forge
   - nodefaults
 dependencies:
-  - python=3.11
+  - python=3.12
   - pip
   - git
   - compilers
-  - cmake<3.30.0
+  - cmake
   - make
   - ninja
 EOF
 
 cat <<'EOF' > "$PYTHON_ROOT/requirements.in"
 # --- Core Math & Data ---
-numpy<2.0.0
+numpy
 bottleneck
 dask
 h5py
@@ -373,18 +302,27 @@ pyfoam
 kagglehub
 
 # --- JAX Ecosystem ---
-jax[cuda12]==0.6.2
+jax[cuda12]
 diffrax
+distrax
+distreqx
 equinox
 jaxtyping
 jax2onnx
 jaxopt
 einops
 lineax
-onnx==1.17.0
 optax
 optimistix
 sympy2jax
+
+# --- TensorFlow / PyTorch / ONNX ---
+tensorflow==2.18.1
+torch==2.7.1
+onnx
+onnxruntime
+tf2onnx
+skl2onnx
 
 # --- Machine Learning ---
 catboost
@@ -395,13 +333,19 @@ linear-tree
 mlflow
 mlxtend
 scikit-learn
+shap
 tensorboard
 treeple
 wandb
 xgboost
 
+# --- Symbolic Regression & Julia ---
+pysr
+julia
+
 # --- Hyperparameter Optimisation ---
 optuna
+optuna-dashboard
 
 # --- Statistics ---
 statsmodels
@@ -412,11 +356,10 @@ igraph
 leidenalg
 umap-learn
 
-# --- Physics, CFD & SmartSim ---
+# --- Physics & CFD ---
 cantera
 foamlib
 meshio
-protobuf==3.20.3
 
 # --- Mathematical Tools ---
 numba
@@ -425,21 +368,23 @@ ruptures
 sympy
 tensorly
 
+# --- Data Version Control ---
+dvc
+
 # --- Custom Utilities ---
 DataGraph @ git+https://github.com/PentagonToy/DataGraph.git#subdirectory=DataGraph
 eqx_io @ git+https://github.com/PentagonToy/CSC-HPC-Guide.git#subdirectory=utilities/eqx4smartredis
 
-# --- Config, Logging & Profiling ---
-pydantic
-loguru
-pyinstrument
+# --- Notebook Execution ---
+ipykernel
+ipywidgets
+IPython
+nbconvert
+papermill
 
 # --- Visualisation & UI ---
 cmocean
 colorcet
-ipykernel
-ipywidgets
-IPython
 ipyvtklink
 k3d
 matplotlib
@@ -454,7 +399,12 @@ vtk
 
 # --- Config & CLI ---
 hydra-core
+pydantic
 PyYAML
+
+# --- Profiling & Logging ---
+loguru
+pyinstrument
 
 # --- HPC / Slurm ---
 submitit
@@ -478,7 +428,9 @@ set -e
 export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
+export UV_LINK_MODE=copy
 export UV_CONCURRENT_DOWNLOADS=4
+
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
 python -m pip install --no-cache-dir uv
@@ -487,131 +439,119 @@ uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
-# --- Patched SmartRedis Python client (both architectures) ---
-rm -rf "$CW_BUILD_TMPDIR/SmartRedis"
-git clone \
-    https://github.com/PentagonToy/SmartRedis.git \
-    "$CW_BUILD_TMPDIR/SmartRedis"
-cd "$CW_BUILD_TMPDIR/SmartRedis"
+# Resolve and precompile PySR's Julia dependency using the actual
+# in-container Python prefix.
+PYTHON_PREFIX="$(python -c 'import sys; print(sys.prefix)')"
+export JULIA_DEPOT_PATH="$PYTHON_PREFIX/julia_depot"
+export PYTHON_JULIAPKG_PROJECT="$PYTHON_PREFIX/julia_env"
 
-grep -q '#include <cstdint>' src/cpp/tensorpack.cpp || \
-    sed -i '30i #include <cstdint>' src/cpp/tensorpack.cpp
+mkdir -p "$JULIA_DEPOT_PATH" "$PYTHON_JULIAPKG_PROJECT"
 
-OLD_CFLAGS="${CFLAGS-}"; OLD_CXXFLAGS="${CXXFLAGS-}"
-OLD_CPPFLAGS="${CPPFLAGS-}"; OLD_LDFLAGS="${LDFLAGS-}"
-unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+python - <<'PY'
+import juliapkg
 
-python -m pip install --no-cache-dir .
+juliapkg.resolve()
 
-export CFLAGS="$OLD_CFLAGS" CXXFLAGS="$OLD_CXXFLAGS"
-export CPPFLAGS="$OLD_CPPFLAGS" LDFLAGS="$OLD_LDFLAGS"
-
-# --- SmartSim, installed only after SmartRedis (both architectures) ---
-uv pip install --link-mode=copy smartsim==0.8.0
-
-# --- Linux ARM64 platform patch — arm64 ONLY ---
-# SmartSim 0.8.0 ships a Darwin+ARM64+CPU platform config, but no
-# Linux+ARM64+CPU one, and never maps the "aarch64" string uname -m
-# reports on Linux to the internal "arm64" label it expects. Neither
-# gap is a fundamental RedisAI-on-ARM64 limitation — both are patched
-# here on the installed package, since SquashFS/Tykky images can't be
-# edited after the fact.
-if [ "$ENV_ARCH" = "arm64" ]; then
-    python - <<'PY'
-from pathlib import Path
-import smartsim._core._install.platform as platform_module
-import smartsim._core._install.mlpackages as mlpackages_module
-
-platform_file = Path(platform_module.__file__)
-text = platform_file.read_text()
-old = '''        string = string.lower()
-        return cls(string)
-'''
-new = '''        string = string.lower()
-        if string == "aarch64":
-            string = "arm64"
-        return cls(string)
-'''
-if old in text:
-    platform_file.write_text(text.replace(old, new))
-    print(f"Patched aarch64->arm64 string mapping in: {platform_file}")
-
-config_dir = Path(mlpackages_module.__file__).resolve().parent / "configs" / "mlpackages"
-config_file = config_dir / "LinuxARM64CPU.json"
-config_file.write_text("""{
-    "platform": {
-        "operating_system": "linux",
-        "architecture": "arm64",
-        "device": "cpu"
-    },
-    "ml_packages": [
-        {
-            "name": "dlpack",
-            "version": "v0.5_RAI",
-            "pip_index": "",
-            "python_packages": [],
-            "lib_source": "https://github.com/RedisAI/dlpack.git"
-        }
-    ]
-}
-""")
-print(f"Wrote Linux ARM64 CPU platform config: {config_file}")
+print(f"Julia executable: {juliapkg.executable()}")
+print(f"Julia project:    {juliapkg.project()}")
 PY
-fi
 
-# --- Build the Orchestrator (Redis + RedisAI) — both architectures ---
+python - <<'PY'
+import pysr
+
+print(f"PySR version: {pysr.__version__}")
+PY
+
+python - <<'PY'
+import subprocess
+import juliapkg
+
+julia = juliapkg.executable()
+project = juliapkg.project()
+
+subprocess.run(
+    [
+        julia,
+        f"--project={project}",
+        "-e",
+        (
+            "using Pkg; "
+            "Pkg.instantiate(); "
+            "Pkg.precompile(); "
+            "using PythonCall; "
+            "using SymbolicRegression"
+        ),
+    ],
+    check=True,
+)
+PY
+
+# Install SmartRedis and SmartSim from the CSC-maintained forks.
+uv pip install \
+    --link-mode=copy \
+    "smartredis @ git+https://github.com/PentagonToy/SmartRedis.git@csc-develop"
+
+uv pip install \
+    --link-mode=copy \
+    "smartsim @ git+https://github.com/PentagonToy/SmartSim.git@csc-develop"
+
+# Build Redis and all RedisAI backends on both architectures.
 export USE_SYSTEMD=no
 
-env CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart clobber
+smart clobber
 
-env CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart build \
-        --device cpu \
-        --skip-torch \
-        --skip-tensorflow \
-        --skip-onnx
+smart build \
+    --device cpu \
+    --skip-python-packages
 
-# Restore packages potentially disturbed by the build above
+# Restore packages potentially changed by smart build.
 uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
 uv pip check
 
-# Record installed versions; SmartSim/SmartRedis excluded (installed
-# fresh from source every build, never replayed).
 python -m pip list --format=freeze \
     | grep -v '^smartredis==' \
     | grep -v '^smartsim==' \
     | sort \
     > "$PYTHON_ROOT/requirements-$ENV_ARCH.txt"
 
-rm -rf "$CW_BUILD_TMPDIR/SmartRedis"
+python - <<'PY' > "$PYTHON_ROOT/julia-environment-$ENV_ARCH.txt"
+import subprocess
+import juliapkg
+
+julia = juliapkg.executable()
+project = juliapkg.project()
+
+print(f"Julia executable: {julia}")
+print(f"Julia project: {project}\n")
+
+subprocess.run(
+    [
+        julia,
+        f"--project={project}",
+        "-e",
+        "using InteractiveUtils; versioninfo(); using Pkg; Pkg.status()",
+    ],
+    check=True,
+)
+PY
+
 rm -rf "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 EOF
+
 chmod +x "$PYTHON_ROOT/extra4SmartSim.sh"
 
-echo "      -> base4SmartSim.yml, requirements.in, extra4SmartSim.sh"
+echo "      Created base4SmartSim.yml"
+echo "      Created requirements.in"
+echo "      Created extra4SmartSim.sh"
 echo
 
 # ------------------------------------------------------------------
-# Step 7: Build the Tykky environment (guide Section 5, on login node)
+# 5. Build Tykky environment
 # ------------------------------------------------------------------
-echo "[4/10] Building the Tykky environment on the login node..."
-if [ "$ENV_ARCH" = "arm64" ]; then
-    echo "      (this installs a large scientific stack + SmartRedis + SmartSim,"
-    echo "       patches SmartSim's Linux ARM64 platform detection, then builds"
-    echo "       the Redis/RedisAI Orchestrator — can take a long time)"
-else
-    echo "      (this installs a large scientific stack + SmartRedis + SmartSim"
-    echo "       + the Redis/RedisAI Orchestrator, and can take a long time)"
-fi
-echo
+echo "[4/10] Building the Tykky environment..."
 
 module purge
 module load tykky
@@ -628,45 +568,40 @@ conda-containerize new \
     "$PYTHON_ROOT/base4SmartSim.yml"
 
 echo
-echo "      Build finished. Checking output..."
+echo "      Tykky environment built:"
 ls -ld "$ENV_PREFIX"
-ls -lh "$PYTHON_ROOT/requirements-$ENV_ARCH.txt" 2>/dev/null || true
+ls -lh "$PYTHON_ROOT/requirements-$ENV_ARCH.txt"
+ls -lh "$PYTHON_ROOT/julia-environment-$ENV_ARCH.txt"
 echo
 
 # ------------------------------------------------------------------
-# Step 8: Build the native SmartRedis library (guide Section 6)
+# 6. Native SmartRedis library
 # ------------------------------------------------------------------
-# This is a separate CMake build unrelated to smart build/RedisAI, and
-# is run on BOTH architectures.
-echo "[5/10] Loading compiler modules for the native SmartRedis build..."
+echo "[5/10] Loading native-build modules..."
 
 module purge
 module load "$GCC_MODULE"
 module load "$CMAKE_MODULE"
+
 if [ "$LOAD_GIT_MODULE" = "yes" ]; then
     module load git
 fi
 
-echo "      Loaded: $GCC_MODULE, $CMAKE_MODULE"
+echo "      Loaded $GCC_MODULE"
+echo "      Loaded $CMAKE_MODULE"
 echo
 
 echo "[6/10] Building the native SmartRedis library..."
 
 cd "$BASE_SCRATCH"
-
-echo "      This will remove only this native SmartRedis directory:"
-echo "      $SMARTREDIS_DIR"
 rm -rf "$SMARTREDIS_DIR"
 
 git clone \
+    --branch csc-develop \
     https://github.com/PentagonToy/SmartRedis.git \
     "$SMARTREDIS_DIR"
 
 cd "$SMARTREDIS_DIR"
-
-grep -q '#include <cstdint>' src/cpp/tensorpack.cpp || \
-    sed -i '30i #include <cstdint>' src/cpp/tensorpack.cpp
-
 rm -rf build install
 
 env \
@@ -680,49 +615,45 @@ echo "[7/10] Verifying the native SmartRedis library..."
 
 find "$SMARTREDIS_DIR/install" -maxdepth 3 -type f | sort
 
-# Detect whether this system produced lib64 or lib, so the loader
-# and smartsim-update helper text below don't hardcode the wrong one.
 if [ -d "$SMARTREDIS_DIR/install/lib64" ]; then
     LIB_DIR="lib64"
 else
     LIB_DIR="lib"
 fi
-echo "      Detected library directory: install/$LIB_DIR"
 
+echo "      Native library directory: install/$LIB_DIR"
 ls -la "$SMARTREDIS_DIR/install/$LIB_DIR"
 
 if [ -f "$SMARTREDIS_DIR/install/$LIB_DIR/libsmartredis-fortran.so" ]; then
     echo "      SmartRedis Fortran library installed successfully."
 else
-    echo "      WARNING: libsmartredis-fortran.so not found under"
-    echo "      $SMARTREDIS_DIR/install/$LIB_DIR — check the build log above."
+    echo "ERROR: libsmartredis-fortran.so was not found."
+    exit 1
 fi
 
-ldd "$SMARTREDIS_DIR/install/$LIB_DIR/libsmartredis-fortran.so" 2>/dev/null || true
+ldd "$SMARTREDIS_DIR/install/$LIB_DIR/libsmartredis-fortran.so"
 echo
 
 # ------------------------------------------------------------------
-# Step 9: Create the loader (guide Section 7), with the detected
-# lib/lib64 directory and the GCC module baked in.
+# 7. Loader
 # ------------------------------------------------------------------
-echo "[8/10] Creating loader Python4SmartSim.sh and update tooling..."
+echo "[8/10] Creating loader and update tooling..."
 
-cat <<EOF > "$BASE_SCRATCH/Python4SmartSim.sh"
+cat <<'EOF' > "$BASE_SCRATCH/Python4SmartSim.sh"
 #!/bin/bash
 
-if [ ! -f "\$HOME/.config/csc-hpc/identity.sh" ]; then
-    echo "Identity file not found: \$HOME/.config/csc-hpc/identity.sh"
-    echo "Run smartsim-python.sh (or Section 0 of the SmartSim guide) first."
+if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
+    echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
     return 1
 fi
 
-source "\$HOME/.config/csc-hpc/identity.sh"
+source "$HOME/.config/csc-hpc/identity.sh"
 
-export BASE_SCRATCH="/scratch/\$CSC_PROJECT/\$PROJECT_USER_DIR/Utilities"
-export PYTHON_BASE="\$BASE_SCRATCH/Python"
-export PYTHON_ROOT="\$PYTHON_BASE/PythonSmartSim"
+export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
+export PYTHON_BASE="$BASE_SCRATCH/Python"
+export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
 
-case "\$(uname -m)" in
+case "$(uname -m)" in
     x86_64)
         export ENV_ARCH="x64"
         export KERNEL_ARCH="x86_64"
@@ -734,42 +665,98 @@ case "\$(uname -m)" in
         export JAX_PLATFORMS="cuda"
         ;;
     *)
-        echo "Unsupported architecture: \$(uname -m)"
+        echo "Unsupported architecture: $(uname -m)"
         return 1
         ;;
 esac
 
-export ENV_PREFIX="\$PYTHON_ROOT/envs/\$ENV_NICKNAME-3.11-\$ENV_ARCH"
-export SMARTREDIS_DIR="\$BASE_SCRATCH/SmartRedis-\$ENV_ARCH"
+export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
+export SMARTREDIS_DIR="$BASE_SCRATCH/SmartRedis-$ENV_ARCH"
 
-# GCC module used to build SmartRedis on $TARGET_SYSTEM
-module load $GCC_MODULE
+case "${HOSTNAME:-}" in
+    *roihu*)
+        module load gcc/13.4.0
+        ;;
+    *mahti*)
+        module load gcc/13.1.0
+        ;;
+    *puhti*)
+        echo "Load the GCC module matching the Puhti SmartRedis native build."
+        ;;
+    *)
+        echo "Unrecognised host. Load the GCC module matching the native build."
+        ;;
+esac
 
-export PATH="\$ENV_PREFIX/bin:\$PATH"
+export PATH="$ENV_PREFIX/bin:$PATH"
 
-# Detected at build time on $TARGET_SYSTEM: install/$LIB_DIR
-export LD_LIBRARY_PATH="\$SMARTREDIS_DIR/install/$LIB_DIR:\${LD_LIBRARY_PATH:-}"
-export CMAKE_PREFIX_PATH="\$SMARTREDIS_DIR/install:\${CMAKE_PREFIX_PATH:-}"
+if [ ! -x "$ENV_PREFIX/bin/python" ]; then
+    echo "Environment not found for $ENV_ARCH: $ENV_PREFIX"
+    return 1
+fi
+
+if [ -d "$SMARTREDIS_DIR/install/lib64" ]; then
+    SMARTREDIS_LIB_DIR="$SMARTREDIS_DIR/install/lib64"
+else
+    SMARTREDIS_LIB_DIR="$SMARTREDIS_DIR/install/lib"
+fi
+
+export LD_LIBRARY_PATH="$SMARTREDIS_LIB_DIR:${LD_LIBRARY_PATH:-}"
+export CMAKE_PREFIX_PATH="$SMARTREDIS_DIR/install:${CMAKE_PREFIX_PATH:-}"
 
 export SMARTSIM_DB_FILE_PARSE_TRIALS=600
 
-export JUPYTER_KERNEL_NAME="\$ENV_NICKNAME-smartsim-\$KERNEL_ARCH"
-export JUPYTER_KERNEL_DISPLAY="Python 3.11 (\$ENV_NICKNAME SmartSim \$KERNEL_ARCH)"
-export XDG_DATA_HOME="\${XDG_DATA_HOME:-\$HOME/.local/share/\$KERNEL_ARCH}"
-export JUPYTER_KERNEL_DIR="\$XDG_DATA_HOME/jupyter/kernels/\$JUPYTER_KERNEL_NAME"
+# PySR / Julia runtime setup.
+export PYTHON_PREFIX="$(python -c 'import sys; print(sys.prefix)')"
+export JULIA_ENV_RUNTIME="$BASE_SCRATCH/.julia_env_runtime_$ENV_ARCH"
+export JULIA_DEPOT_RUNTIME="$BASE_SCRATCH/.julia_depot_runtime_$ENV_ARCH"
 
-echo "ENV_ARCH=\$ENV_ARCH"
-echo "PYTHON_ROOT=\$PYTHON_ROOT"
-echo "ENV_PREFIX=\$ENV_PREFIX"
-echo "SMARTREDIS_DIR=\$SMARTREDIS_DIR"
-echo "JAX_PLATFORMS=\$JAX_PLATFORMS"
+python - <<'PY'
+import os
+import shutil
+import sys
+from pathlib import Path
+
+source = Path(sys.prefix) / "julia_env"
+target = Path(os.environ["JULIA_ENV_RUNTIME"])
+
+shutil.rmtree(target, ignore_errors=True)
+shutil.copytree(source, target)
+
+Path(os.environ["JULIA_DEPOT_RUNTIME"]).mkdir(
+    parents=True,
+    exist_ok=True,
+)
+PY
+
+export PYTHON_JULIAPKG_PROJECT="$JULIA_ENV_RUNTIME"
+export JULIA_DEPOT_PATH="$JULIA_DEPOT_RUNTIME:$PYTHON_PREFIX/julia_depot"
+export PYTHON_JULIAPKG_OFFLINE="yes"
+export PYTHON_JULIACALL_THREADS="${SLURM_CPUS_PER_TASK:-auto}"
+
+unset PYTHON_JULIACALL_EXE
+unset PYTHON_JULIACALL_PROJECT
+
+export JUPYTER_KERNEL_NAME="$ENV_NICKNAME-smartsim-$KERNEL_ARCH"
+export JUPYTER_KERNEL_DISPLAY="Python 3.12 ($ENV_NICKNAME SmartSim $KERNEL_ARCH)"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share/$KERNEL_ARCH}"
+export JUPYTER_KERNEL_DIR="$XDG_DATA_HOME/jupyter/kernels/$JUPYTER_KERNEL_NAME"
+
+echo "ENV_ARCH=$ENV_ARCH"
+echo "PYTHON_ROOT=$PYTHON_ROOT"
+echo "ENV_PREFIX=$ENV_PREFIX"
+echo "SMARTREDIS_DIR=$SMARTREDIS_DIR"
+echo "JAX_PLATFORMS=$JAX_PLATFORMS"
+echo "PYTHON_JULIAPKG_PROJECT=$PYTHON_JULIAPKG_PROJECT"
+echo "JULIA_DEPOT_PATH=$JULIA_DEPOT_PATH"
 EOF
 
 chmod +x "$BASE_SCRATCH/Python4SmartSim.sh"
-echo "      -> $BASE_SCRATCH/Python4SmartSim.sh"
+
+echo "      Created $BASE_SCRATCH/Python4SmartSim.sh"
 
 # ------------------------------------------------------------------
-# Step 9b: Create update4SmartSim.sh (guide Section 11, post-install script)
+# 8. update4SmartSim.sh
 # ------------------------------------------------------------------
 cat <<'EOF' > "$PYTHON_ROOT/update4SmartSim.sh"
 #!/bin/bash
@@ -782,18 +769,17 @@ set -e
 export TMPDIR="$CW_BUILD_TMPDIR"
 export PIP_CACHE_DIR="$CW_BUILD_TMPDIR/.pip_cache"
 export UV_CACHE_DIR="$CW_BUILD_TMPDIR/.uv_cache"
+export UV_LINK_MODE=copy
 export UV_CONCURRENT_DOWNLOADS=4
 
 mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 
 python -m pip install --no-cache-dir uv
 
-# Install the complete constrained dependency set
 uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
-# Explicitly upgrade packages requested through smartsim-update
 UPDATE_REQUEST="$PYTHON_ROOT/.smartsim-update-$ENV_ARCH.txt"
 
 if [ -s "$UPDATE_REQUEST" ]; then
@@ -805,106 +791,61 @@ if [ -s "$UPDATE_REQUEST" ]; then
         "${UPDATE_PACKAGES[@]}"
 fi
 
-# Install the patched SmartRedis Python client (both architectures)
-rm -rf "$CW_BUILD_TMPDIR/SmartRedis"
+# Keep the packaged Julia environment ready for PySR.
+PYTHON_PREFIX="$(python -c 'import sys; print(sys.prefix)')"
+export JULIA_DEPOT_PATH="$PYTHON_PREFIX/julia_depot"
+export PYTHON_JULIAPKG_PROJECT="$PYTHON_PREFIX/julia_env"
 
-git clone \
-    https://github.com/PentagonToy/SmartRedis.git \
-    "$CW_BUILD_TMPDIR/SmartRedis"
+python - <<'PY'
+import juliapkg
+import pysr
 
-cd "$CW_BUILD_TMPDIR/SmartRedis"
+juliapkg.resolve()
 
-grep -q '#include <cstdint>' src/cpp/tensorpack.cpp || \
-    sed -i '30i #include <cstdint>' src/cpp/tensorpack.cpp
+print(f"PySR version:     {pysr.__version__}")
+print(f"Julia executable: {juliapkg.executable()}")
+PY
 
-OLD_CFLAGS="${CFLAGS-}"
-OLD_CXXFLAGS="${CXXFLAGS-}"
-OLD_CPPFLAGS="${CPPFLAGS-}"
-OLD_LDFLAGS="${LDFLAGS-}"
+python - <<'PY'
+import subprocess
+import juliapkg
 
-unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+julia = juliapkg.executable()
+project = juliapkg.project()
 
-python -m pip install --no-cache-dir .
+subprocess.run(
+    [
+        julia,
+        f"--project={project}",
+        "-e",
+        "using Pkg; Pkg.instantiate(); Pkg.precompile()",
+    ],
+    check=True,
+)
+PY
 
-export CFLAGS="$OLD_CFLAGS"
-export CXXFLAGS="$OLD_CXXFLAGS"
-export CPPFLAGS="$OLD_CPPFLAGS"
-export LDFLAGS="$OLD_LDFLAGS"
-
-# Install SmartSim only after SmartRedis (both architectures)
 uv pip install \
     --link-mode=copy \
-    smartsim==0.8.0
+    "smartredis @ git+https://github.com/PentagonToy/SmartRedis.git@csc-develop"
 
-# Linux ARM64 platform patch — arm64 ONLY. See extra4SmartSim.sh for details.
-if [ "$ENV_ARCH" = "arm64" ]; then
-    python - <<'PY'
-from pathlib import Path
-import smartsim._core._install.platform as platform_module
-import smartsim._core._install.mlpackages as mlpackages_module
+uv pip install \
+    --link-mode=copy \
+    "smartsim @ git+https://github.com/PentagonToy/SmartSim.git@csc-develop"
 
-platform_file = Path(platform_module.__file__)
-text = platform_file.read_text()
-old = '''        string = string.lower()
-        return cls(string)
-'''
-new = '''        string = string.lower()
-        if string == "aarch64":
-            string = "arm64"
-        return cls(string)
-'''
-if old in text:
-    platform_file.write_text(text.replace(old, new))
-
-config_dir = Path(mlpackages_module.__file__).resolve().parent / "configs" / "mlpackages"
-config_file = config_dir / "LinuxARM64CPU.json"
-config_file.write_text("""{
-    "platform": {
-        "operating_system": "linux",
-        "architecture": "arm64",
-        "device": "cpu"
-    },
-    "ml_packages": [
-        {
-            "name": "dlpack",
-            "version": "v0.5_RAI",
-            "pip_index": "",
-            "python_packages": [],
-            "lib_source": "https://github.com/RedisAI/dlpack.git"
-        }
-    ]
-}
-""")
-PY
-fi
-
-# Rebuild the Orchestrator (Redis + RedisAI) — both architectures.
 export USE_SYSTEMD=no
 
-env \
-    CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart clobber
+smart clobber
 
-env \
-    CFLAGS="-Wno-incompatible-pointer-types" \
-    CXXFLAGS="-Wno-incompatible-pointer-types" \
-    USE_SYSTEMD=no \
-    smart build \
-        --device cpu \
-        --skip-torch \
-        --skip-tensorflow \
-        --skip-onnx
+smart build \
+    --device cpu \
+    --skip-python-packages
 
-# Restore the constrained dependency set after the build step above
 uv pip install \
     --link-mode=copy \
     --requirements "$PYTHON_ROOT/requirements.in"
 
 uv pip check
 
-# Record the installed package state
 python -m pip list --format=freeze \
     | grep -v '^smartredis==' \
     | grep -v '^smartsim==' \
@@ -912,15 +853,15 @@ python -m pip list --format=freeze \
     > "$PYTHON_ROOT/requirements-$ENV_ARCH.txt"
 
 rm -f "$UPDATE_REQUEST"
-rm -rf "$CW_BUILD_TMPDIR/SmartRedis"
 rm -rf "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
 EOF
 
 chmod +x "$PYTHON_ROOT/update4SmartSim.sh"
-echo "      -> $PYTHON_ROOT/update4SmartSim.sh"
+
+echo "      Created $PYTHON_ROOT/update4SmartSim.sh"
 
 # ------------------------------------------------------------------
-# Step 9c: Create the smartsim-update command (guide Section 11)
+# 9. smartsim-update
 # ------------------------------------------------------------------
 mkdir -p "$HOME/bin"
 
@@ -935,7 +876,6 @@ fi
 
 if [ ! -f "$HOME/.config/csc-hpc/identity.sh" ]; then
     echo "Identity file not found: $HOME/.config/csc-hpc/identity.sh"
-    echo "Run smartsim-python.sh (or Section 0 of the SmartSim guide) first."
     exit 1
 fi
 
@@ -958,27 +898,22 @@ case "$(uname -m)" in
         ;;
 esac
 
-export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.11-$ENV_ARCH"
+export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export TMP_BUILD_DIR="$BASE_SCRATCH/.tykky_runtime_smartsim_$ENV_ARCH"
 export UPDATE_REQUEST="$PYTHON_ROOT/.smartsim-update-$ENV_ARCH.txt"
 
 if [ ! -d "$ENV_PREFIX" ]; then
-    echo "Environment not found:"
-    echo "$ENV_PREFIX"
+    echo "Environment not found: $ENV_PREFIX"
     exit 1
 fi
 
 if [ ! -f "$PYTHON_ROOT/requirements.in" ]; then
-    echo "requirements.in not found:"
-    echo "$PYTHON_ROOT/requirements.in"
+    echo "requirements.in not found: $PYTHON_ROOT/requirements.in"
     exit 1
 fi
 
 for package in "$@"; do
-    package_name="$(
-        printf '%s\n' "$package" |
-        sed -E 's/\[.*//; s/[<>=!~].*//'
-    )"
+    package_name="$(printf '%s\n' "$package" | sed -E 's/\[.*//; s/[<>=!~].*//')"
 
     case "$package_name" in
         smartsim|smartredis)
@@ -1033,35 +968,26 @@ export CW_BUILD_TMPDIR="$TMP_BUILD_DIR"
 
 mkdir -p "$TMP_BUILD_DIR"
 
-echo
-echo "Architecture: $ENV_ARCH"
-echo "Environment:  $ENV_PREFIX"
-echo "Packages:     $*"
-echo
-
 conda-containerize update \
     --post-install "$PYTHON_ROOT/update4SmartSim.sh" \
     "$ENV_PREFIX"
 
-echo
 echo "Update completed."
-echo "Recorded packages:"
-echo "$PYTHON_ROOT/requirements-$ENV_ARCH.txt"
+echo "Recorded packages: $PYTHON_ROOT/requirements-$ENV_ARCH.txt"
 EOF
 
 chmod +x "$HOME/bin/smartsim-update"
-echo "      -> $HOME/bin/smartsim-update"
 
 grep -qxF 'export PATH="$HOME/bin:$PATH"' "$HOME/.bashrc" || \
     echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
 
-echo "      -> Added \$HOME/bin to PATH in ~/.bashrc (if not already present)"
+echo "      Created $HOME/bin/smartsim-update"
 echo
 
 # ------------------------------------------------------------------
-# Step 10: Register the Jupyter kernel (guide Section 8)
+# 10. Jupyter kernel
 # ------------------------------------------------------------------
-echo "[9/10] Registering the Jupyter kernel for this architecture..."
+echo "[9/10] Registering the Jupyter kernel..."
 
 source "$BASE_SCRATCH/Python4SmartSim.sh"
 
@@ -1072,71 +998,45 @@ cat <<EOF > "$JUPYTER_KERNEL_DIR/kernel.json"
   "argv": ["$ENV_PREFIX/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
   "display_name": "$JUPYTER_KERNEL_DISPLAY",
   "language": "python",
-  "metadata": { "debugger": true }
+  "metadata": { "debugger": true },
+  "env": {
+    "JAX_PLATFORMS": "$JAX_PLATFORMS",
+    "PYTHON_JULIAPKG_PROJECT": "$PYTHON_JULIAPKG_PROJECT",
+    "JULIA_DEPOT_PATH": "$JULIA_DEPOT_PATH",
+    "PYTHON_JULIAPKG_OFFLINE": "yes",
+    "PYTHON_JULIACALL_THREADS": "auto"
+  }
 }
 EOF
 
-echo "      -> $JUPYTER_KERNEL_DIR/kernel.json"
-echo "      Registered kernel: $JUPYTER_KERNEL_NAME"
+echo "      Created $JUPYTER_KERNEL_DIR/kernel.json"
+echo "      Registered $JUPYTER_KERNEL_NAME"
 echo
 
 if command -v jupyter >/dev/null 2>&1; then
     jupyter kernelspec list 2>/dev/null || true
-else
-    echo "      (jupyter CLI not on PATH in this shell — kernel.json was still"
-    echo "       written correctly; 'jupyter kernelspec list' will show it once"
-    echo "       run from inside the loaded environment.)"
 fi
-echo
 
 echo "[10/10] Installation complete."
 echo "=================================================================="
-echo " Installation complete."
-echo "=================================================================="
 echo
-echo "Load the environment with:"
+echo "Load the environment:"
 echo "    source \"$BASE_SCRATCH/Python4SmartSim.sh\""
 echo
-echo "Reload your shell (or open a new one) so smartsim-update is on"
-echo "PATH, then update/add packages with, e.g.:"
+echo "Update or add packages:"
 echo "    smartsim-update pydantic"
-echo "    smartsim-update \"tensorflow>=2.20\""
+echo "    smartsim-update loguru pyinstrument"
 echo
-echo "In VS Code, after registering, reload the remote window:"
-echo "    Command Palette -> Developer: Reload Window"
+echo "The environment uses Python 3.12 and includes:"
+echo "    JAX + Equinox"
+echo "    TensorFlow 2.18.1"
+echo "    PyTorch 2.7.1"
+echo "    ONNX + ONNX Runtime"
+echo "    PySR + JuliaCall"
+echo "    SmartSim + SmartRedis CSC forks"
+echo "    RedisAI TensorFlow + ONNX Runtime + LibTorch backends"
 echo
-if [ "$ENV_ARCH" = "arm64" ]; then
-    echo "Note: this arm64 build patched SmartSim's Linux ARM64 platform"
-    echo "detection (Darwin+ARM64+CPU config existed, Linux+ARM64+CPU did"
-    echo "not; the aarch64->arm64 string mapping was also missing), then"
-    echo "compiled Redis + the RedisAI module locally using --skip-torch"
-    echo "--skip-tensorflow --skip-onnx, same as x64. Missing"
-    echo "PyTorch/TensorFlow/ONNXRuntime in 'smart validate' output is"
-    echo "expected; RedisAI itself IS present."
-else
-    echo "Note: this x64 build compiles Redis + the RedisAI module (required by"
-    echo "the SmartSim Orchestrator) using --skip-torch --skip-tensorflow"
-    echo "--skip-onnx, excluding all three ML-execution backends. Missing"
-    echo "PyTorch/TensorFlow/ONNXRuntime in 'smart validate' output is"
-    echo "expected; RedisAI itself IS present."
-fi
+echo "No SmartSim or SmartRedis source patching was applied."
 echo
-echo "If a future SmartSim patch renames the build flags again, run"
-echo "'smart build --help' inside the build environment to get the current"
-echo "ground truth, rather than trusting this script."
-echo
-echo "If you're setting up BOTH architectures, run this script again on"
-echo "the OTHER node type (CPU/login for x64, Roihu GPU for arm64) with"
-echo "the SAME identity values."
-echo
-echo "Note: if this native library was built on a different node type than"
-echo "you'll actually run solvers on (e.g. built here but used later on a"
-echo "different Roihu partition), re-check install/lib vs install/lib64"
-echo "and the GCC module — this loader currently assumes: $GCC_MODULE,"
-echo "install/$LIB_DIR."
-echo
-echo "Skipped (not part of installation — see the full guide if needed):"
-echo "  - Environment validation          (guide Section 9)"
-echo "  - Dependency file workflow notes  (guide Section 10, doc only)"
-echo "  - Rebuild / troubleshooting       (guide Sections 12-13)"
-echo "  - Deployment track notes          (guide Section 14, doc only)"
+echo "Run the script again on the other architecture when both x64 and"
+echo "arm64 environments are required. Use the same identity values."
