@@ -49,18 +49,24 @@ The Python environments are packaged with **Tykky** to minimise small-file I/O o
 
 #### Unified SmartSim and Machine-Learning Environment
 
-* **[SmartSim Environment Configuration Guide](https://www.google.com/search?q=python-environment/smartsim-environment.md)**
-* **Purpose:** SmartSim 0.8.0, SmartRedis 0.6.1-compatible, RedisAI, JAX, Equinox, TensorFlow, PyTorch, ONNX, PySR, and JuliaCall workflows.
+* **[SmartSim Environment Configuration Guide](python-environment/smartsim-environment.md)**
+* **Purpose:** SmartSim `1.0.3+csc`, SmartRedis `1.0.0+csc`, RedisAI, JAX, Equinox, TensorFlow, PyTorch, ONNX, PySR, and JuliaCall workflows.
 * **Python:** 3.12
 * **NumPy:** `>= 2.0`
 * **TensorFlow:** `2.18.1`
 * **PyTorch:** `2.7.1`
 * **Architecture support:** x86_64 and ARM64/aarch64
-* **RedisAI backends:** TensorFlow, ONNX Runtime, and LibTorch
+* **RedisAI backends:** TensorFlow, ONNX Runtime, LibTorch, and JAX
 
 This unified environment replaces the previously separate SmartSim and machine-learning environments. A standalone `PythonML` environment is not required when using this stack.
 
-SmartSim and SmartRedis are installed from the CSC-maintained `csc-develop` forks. The Tykky environment and native SmartRedis library must be built separately for each architecture.
+SmartSim and SmartRedis are installed from the CSC-maintained releases:
+
+* SmartSim: `v1.0.3-csc`
+* SmartRedis: `v1.0.0-csc`
+* RedisAI: `v1.0.0-csc`
+
+The Tykky environment and native SmartRedis library must be built separately for each architecture.
 
 ---
 
