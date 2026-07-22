@@ -29,7 +29,7 @@ This environment is now a **superset of the previously separate `PythonML` stack
 
 Everything else in the stack — SmartSim, SmartRedis, JAX, TensorFlow, PyTorch, ONNX, RedisAI backends — is unaffected by this toggle and always installs.
 
-SmartSim and SmartRedis install directly from the CSC-maintained forks (`csc-develop` branch), which already contain:
+SmartSim and SmartRedis install directly from the CSC-maintained `v1.0.0-csc` releases, which already contain:
 
 * **Python 3.12 support**
 * **NumPy 2.x compatibility**
@@ -38,12 +38,15 @@ SmartSim and SmartRedis install directly from the CSC-maintained forks (`csc-dev
 * **RedisAI ONNX Runtime backend on Linux ARM64**
 * **RedisAI LibTorch backend on Linux ARM64**
 * **SmartRedis compiler/source fixes**
+* **RedisAI JAX backend with direct JAX/Equinox model registration**
+* **Automatic JAX worker lifecycle management**
+* **JAX output shape and `float32`/`float64`/`int32`/`int64` dtype support**
 
-**No post-install source patching is required.** `smart build` runs identically on `x64` and `arm64`, building the RedisAI TensorFlow, ONNX Runtime, and LibTorch backends automatically.
+**No post-install source patching is required.** `smart build` runs identically on `x64` and `arm64`, building the RedisAI TensorFlow, ONNX Runtime, LibTorch, and JAX backends automatically.
 
 When `INSTALL_PYSR=yes`, **PySR's Julia dependency is resolved and precompiled at build time**, exactly as it was in the standalone ML stack: `juliapkg` fetches Julia and the `PythonCall`/`SymbolicRegression` packages inside the Tykky build. Immediately after the Tykky build succeeds, the installer copies that packaged Julia *project* **once** into a writable scratch location (the Tykky image itself is read-only and `juliapkg` needs to write a lock file there); the Julia *depot* directory is created alongside it. Sourcing the loader afterwards only points environment variables at these already-prepared directories — it no longer copies or deletes anything. `PYTHON_JULIAPKG_OFFLINE=yes` at runtime prevents any accidental re-download. When `INSTALL_PYSR=no`, none of this happens — no Julia download, no `julia_env`/`julia_depot` directories, no runtime copy, and the loader skips the Julia block entirely.
 
-RedisAI model execution is available — TensorFlow, ONNX, and PyTorch (via LibTorch) models can be executed with `set_model`/`run_model` — but the primary workflow may still run JAX/Equinox/PySR inference in external Python workers. SmartRedis carries tensors, weights, metrics, and predictions either way.
+RedisAI model execution is available for TensorFlow, ONNX, PyTorch (via LibTorch), and JAX/Equinox models. JAX or Equinox callables can be registered directly with `set_model(..., backend="JAX", example_inputs=...)` and executed through `run_model`; SmartSim manages the persistent JAX worker automatically.
 
 We use **Tykky** to package the whole Python stack into a single-file container image, avoiding Lustre metadata slowdowns from thousands of small file imports.
 
@@ -55,8 +58,8 @@ A Tykky container built for one architecture will not run on the other. The **Sm
 
 ```text
 Python        3.12
-SmartSim      0.8.0 (CSC fork: PentagonToy/SmartSim @ csc-develop)
-SmartRedis    0.6.1-compatible (CSC fork: PentagonToy/SmartRedis @ csc-develop)
+SmartSim      1.0.0+csc (PentagonToy/SmartSim @ v1.0.0-csc)
+SmartRedis    1.0.0+csc (PentagonToy/SmartRedis @ v1.0.0-csc)
 JAX           resolved at build time (CUDA 12 on arm64)
 TensorFlow    2.18.1
 PyTorch       2.7.1
@@ -65,7 +68,7 @@ PySR / Julia  OPTIONAL (INSTALL_PYSR=yes/no); resolved + precompiled at build ti
 NumPy         >= 2.0
 protobuf      resolved by uv (no longer hard-pinned)
 CMake         resolved (no longer pinned < 3.30.0)
-RedisAI       TensorFlow + ONNX Runtime + LibTorch backends, built on both x64 and arm64
+RedisAI       TensorFlow + ONNX Runtime + LibTorch + JAX backends, built on both x64 and arm64
 ```
 
 ```text
@@ -94,8 +97,8 @@ Choose target architecture + PySR/Julia toggle (Section 1)
   |     Global Config (x64) --> choose INSTALL_PYSR=yes/no, persist to install-options-x64.sh
   |     --> install full requirements.in (pysr/julia included only if INSTALL_PYSR=yes)
   |     --> [if INSTALL_PYSR=yes] resolve/precompile Julia + PySR
-  |     --> install SmartRedis + SmartSim (csc-develop fork)
-  |     --> build Tykky env (Redis + RedisAI, all backends, via smart build)
+  |     --> install SmartRedis + SmartSim (v1.0.0-csc releases)
+  |     --> build Tykky env (Redis + RedisAI TensorFlow/ONNX Runtime/LibTorch/JAX backends)
   |     --> [if INSTALL_PYSR=yes] prepare writable Julia runtime ONCE
   |     --> build SmartRedis-x64 native library; record GCC module + PySR flag used
   |
@@ -103,8 +106,8 @@ Choose target architecture + PySR/Julia toggle (Section 1)
         Global Config (arm64) --> choose INSTALL_PYSR=yes/no, persist to install-options-arm64.sh
         --> install full requirements.in (pysr/julia included only if INSTALL_PYSR=yes)
         --> [if INSTALL_PYSR=yes] resolve/precompile Julia + PySR
-        --> install SmartRedis + SmartSim (csc-develop fork)
-        --> build Tykky env (Redis + RedisAI, all backends — same as x64)
+        --> install SmartRedis + SmartSim (v1.0.0-csc releases)
+        --> build Tykky env (Redis + RedisAI TensorFlow/ONNX Runtime/LibTorch/JAX backends)
         --> [if INSTALL_PYSR=yes] prepare writable Julia runtime ONCE
         --> build SmartRedis-arm64 native library; record GCC module + PySR flag used
         --> also runs JAX/Equinox/TensorFlow/PyTorch(/PySR) training and inference locally
@@ -274,8 +277,8 @@ The `.julia_env_runtime_*` / `.julia_depot_runtime_*` directories, `runtime-$ENV
 | --- | --- | --- |
 | Python | 3.12 | Base interpreter |
 | uv | latest at build | Resolution, installation, `uv pip check` |
-| SmartSim | `PentagonToy/SmartSim @ csc-develop` | Orchestration; Redis + RedisAI lifecycle on both architectures |
-| SmartRedis | `PentagonToy/SmartRedis @ csc-develop` | Python client + native C++/Fortran library, both architectures |
+| SmartSim | `1.0.0+csc` (`PentagonToy/SmartSim @ v1.0.0-csc`) | Orchestration; Redis, RedisAI, and JAX worker lifecycle |
+| SmartRedis | `1.0.0+csc` (`PentagonToy/SmartRedis @ v1.0.0-csc`) | Python client with direct JAX/Equinox registration + native C++/Fortran library |
 | JAX / Equinox / distrax / distreqx | resolved at build time; CUDA 12 on arm64 | Autodiff / training / inference / probabilistic modelling |
 | TensorFlow | 2.18.1 | Python framework + source for the RedisAI TensorFlow backend |
 | PyTorch | 2.7.1 | Python framework; RedisAI executes via the LibTorch backend |
@@ -287,7 +290,7 @@ The `.julia_env_runtime_*` / `.julia_depot_runtime_*` directories, `runtime-$ENV
 | optuna / optuna-dashboard | resolved | Hyperparameter optimisation + web UI |
 | NumPy | `>= 2.0` | No longer pinned below 2.0 |
 | pydantic / loguru / pyinstrument | resolved | Config validation, structured logging, profiling |
-| RedisAI backends | TensorFlow + ONNX Runtime + LibTorch, built on **both** architectures | Fetched automatically from GitHub Releases during `smart build` |
+| RedisAI backends | TensorFlow + ONNX Runtime + LibTorch + JAX, built on **both** architectures | JAX/Equinox and conventional ML model execution through SmartRedis |
 
 ---
 
@@ -414,7 +417,6 @@ dvc
 
 # --- Custom Utilities ---
 DataGraph @ git+https://github.com/PentagonToy/DataGraph.git#subdirectory=DataGraph
-eqx_io @ git+https://github.com/PentagonToy/CSC-HPC-Guide.git#subdirectory=utilities/eqx4smartredis
 
 # --- Notebook Execution ---
 ipykernel
@@ -537,17 +539,17 @@ else
     echo "INSTALL_PYSR=no — skipping PySR/Julia resolve and precompile."
 fi
 
-# --- SmartRedis + SmartSim, from the CSC-maintained forks (both architectures) ---
-# csc-develop already contains: the SmartRedis <cstdint> compiler fix, the
-# SmartSim Linux+ARM64+CPU platform config, and the aarch64->arm64
-# architecture-string mapping. No post-install patching is needed.
+# --- SmartRedis + SmartSim v1.0.0-csc releases (both architectures) ---
+# v1.0.0-csc includes the CSC platform/compiler fixes and integrated
+# RedisAI JAX backend with direct JAX/Equinox model registration.
+# No post-install patching is needed.
 uv pip install \
     --link-mode=copy \
-    "smartredis @ git+https://github.com/PentagonToy/SmartRedis.git@csc-develop"
+    "smartredis @ git+https://github.com/PentagonToy/SmartRedis.git@v1.0.0-csc"
 
 uv pip install \
     --link-mode=copy \
-    "smartsim @ git+https://github.com/PentagonToy/SmartSim.git@csc-develop"
+    "smartsim @ git+https://github.com/PentagonToy/SmartSim.git@v1.0.0-csc"
 
 # --- Build the Orchestrator (Redis + RedisAI backends) — both architectures ---
 export USE_SYSTEMD=no
@@ -767,7 +769,7 @@ cd "$BASE_SCRATCH"
 rm -rf "$SMARTREDIS_DIR"
 
 git clone \
-    --branch csc-develop \
+    --branch v1.0.0-csc \
     https://github.com/PentagonToy/SmartRedis.git \
     "$SMARTREDIS_DIR"
 
@@ -1060,7 +1062,7 @@ uv pip check
 smart validate --device cpu
 ```
 
-`smart validate` should report TensorFlow, ONNX Runtime, and LibTorch backends as available on both architectures — regardless of the PySR toggle.
+`smart validate` should report TensorFlow, ONNX Runtime, LibTorch, and JAX backends as available on both architectures — regardless of the PySR toggle.
 
 **PySR / JuliaCall** (only meaningful if this architecture was built with `INSTALL_PYSR=yes`; should not download or install anything at this point — that already happened at build time):
 
@@ -1166,11 +1168,11 @@ fi
 
 uv pip install \
     --link-mode=copy \
-    "smartredis @ git+https://github.com/PentagonToy/SmartRedis.git@csc-develop"
+    "smartredis @ git+https://github.com/PentagonToy/SmartRedis.git@v1.0.0-csc"
 
 uv pip install \
     --link-mode=copy \
-    "smartsim @ git+https://github.com/PentagonToy/SmartSim.git@csc-develop"
+    "smartsim @ git+https://github.com/PentagonToy/SmartSim.git@v1.0.0-csc"
 
 export USE_SYSTEMD=no
 
