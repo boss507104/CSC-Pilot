@@ -169,7 +169,7 @@ export PYTHON_BASE="$BASE_SCRATCH/Python"
 export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export SMARTSIM_CSC_REPO="https://github.com/PentagonToy/SmartSim-CSC.git"
-export SMARTSIM_CSC_REF="3d4749d"
+export SMARTSIM_CSC_REF="ee7e8e8"
 export SMARTSIM_CSC_DIR="$PYTHON_ROOT/src/SmartSim-CSC"
 export SMARTREDIS_DIR="$BASE_SCRATCH/SmartRedis-$ENV_ARCH"
 export TMP_BUILD_DIR="$BASE_SCRATCH/.tykky_runtime_smartsim_$ENV_ARCH"
@@ -189,7 +189,7 @@ echo "ENV_ARCH=$ENV_ARCH  PROFILE=$SMARTSIM_CSC_PROFILE  INSTALL_PYSR=$INSTALL_P
 echo "SMARTSIM_CSC_REF=$SMARTSIM_CSC_REF"
 ```
 
-> `SMARTSIM_CSC_REF` currently defaults to the validated commit `3d4749d`, which includes the OpenFOAM v2412 full-build integration. After these changes are merged and released, replace the commit with the corresponding release tag.
+> `SMARTSIM_CSC_REF` currently defaults to the validated commit `ee7e8e8`, which includes the OpenFOAM v2412 full-build integration. After these changes are merged and released, replace the commit with the corresponding release tag.
 
 **Directory layout:**
 
