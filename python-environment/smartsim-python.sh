@@ -34,6 +34,11 @@
 
 # shellcheck shell=bash
 
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    printf 'Error: execute this installer with bash; do not source it.\n' >&2
+    return 1
+fi
+
 set -Eeuo pipefail
 
 # ================================================================
