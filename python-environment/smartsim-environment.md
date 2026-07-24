@@ -742,11 +742,6 @@ cd "$SMARTSIM_CSC_DIR"
 
 export FOAM_USER_APPBIN="$FOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
 export FOAM_USER_LIBBIN="$FOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
-mkdir -p "$FOAM_USER_APPBIN" "$FOAM_USER_LIBBIN"
-
-cd "$SMARTSIM_CSC_DIR/components/openfoam-smartsim/src/smartSimViscosityModel"
-wclean
-wmake libso
 ```
 
 Installed outputs include:
