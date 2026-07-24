@@ -576,7 +576,11 @@ srun --account="$CSC_PROJECT" \
 **Roihu GPU:**
 
 ```bash
-sinteractive --account "$CSC_PROJECT" --gpu --cores 36 --time 01:30:00
+srun --account="$CSC_PROJECT" \
+    --partition=gpuinteractive \
+    --nodes=1 --ntasks=1 --cpus-per-task=16 \
+    --gres=gpu:gh200:1 --mem=64G \
+    --time=01:30:00 --pty bash
 ```
 
 If Section 1's variables aren't inherited, re-run the Global Configuration block on this node.
