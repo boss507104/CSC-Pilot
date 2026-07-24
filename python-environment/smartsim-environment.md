@@ -176,7 +176,7 @@ export PYTHON_BASE="$BASE_SCRATCH/Python"
 export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export SMARTSIM_CSC_REPO="https://github.com/PentagonToy/SmartSim-CSC.git"
-export SMARTSIM_CSC_REF="19a5143"
+export SMARTSIM_CSC_REF="fc599b9"
 export SMARTSIM_CSC_DIR="$PYTHON_ROOT/src/SmartSim-CSC"
 export SMARTREDIS_DIR="$BASE_SCRATCH/SmartRedis-$ENV_ARCH"
 export OPENFOAM_USER_DIR="$BASE_SCRATCH/OpenFOAM/OpenFOAM-v2412"
@@ -206,7 +206,7 @@ echo "INSTALL_PYSR=$INSTALL_PYSR  BUILD_OPENFOAM=$BUILD_OPENFOAM"
 echo "SMARTSIM_CSC_REF=$SMARTSIM_CSC_REF"
 ```
 
-> `SMARTSIM_CSC_REF` currently defaults to the validated commit `19a5143`. It includes FoamPilot live field streaming, result cleanup, and the SmartRedis-backed OpenFOAM viscosity model. Replace the commit with a corresponding release tag when one is published.
+> `SMARTSIM_CSC_REF` currently defaults to the validated commit `fc599b9`. It includes FoamPilot live field streaming, result cleanup, and the SmartRedis-backed OpenFOAM viscosity model. Replace the commit with a corresponding release tag when one is published.
 
 **Directory layout:**
 
