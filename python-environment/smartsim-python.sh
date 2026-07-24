@@ -221,7 +221,7 @@ echo "CMAKE_MODULE      = $CMAKE_MODULE"
 echo "CUDA_MODULE       = ${CUDA_MODULE:-none}"
 echo "Python            = 3.12"
 echo "SmartSim-CSC repo = https://github.com/PentagonToy/SmartSim-CSC.git"
-echo "SmartSim-CSC ref  = ${SMARTSIM_CSC_REF:-26f42db}"
+echo "SmartSim-CSC ref  = ${SMARTSIM_CSC_REF:-19a5143}"
 echo "SmartSim profile  = $SMARTSIM_CSC_PROFILE"
 if [ "$BUILD_OPENFOAM" = "yes" ]; then
     echo "OpenFOAM v2412    = BUILD on x86_64"
@@ -275,7 +275,7 @@ export PYTHON_BASE="$BASE_SCRATCH/Python"
 export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export SMARTSIM_CSC_REPO="${SMARTSIM_CSC_REPO:-https://github.com/PentagonToy/SmartSim-CSC.git}"
-export SMARTSIM_CSC_REF="${SMARTSIM_CSC_REF:-26f42db}"
+export SMARTSIM_CSC_REF="${SMARTSIM_CSC_REF:-19a5143}"
 export SMARTSIM_CSC_DIR="$PYTHON_ROOT/src/SmartSim-CSC"
 export SMARTSIM_CSC_PROFILE
 export SMARTREDIS_DIR="$BASE_SCRATCH/SmartRedis-$ENV_ARCH"
@@ -785,10 +785,23 @@ if [ "$BUILD_OPENFOAM" = "yes" ]; then
     module load openfoam/2412
 
     export FOAM_USER_DIR="$OPENFOAM_USER_DIR"
+    export SMARTREDIS_INCLUDE="$SMARTREDIS_DIR/install/include"
+    export SMARTREDIS_DEP_INCLUDE="$SMARTREDIS_DIR/install/include"
+
+    if [ -d "$SMARTREDIS_DIR/install/lib64" ]; then
+        export SMARTREDIS_LIB="$SMARTREDIS_DIR/install/lib64"
+    else
+        export SMARTREDIS_LIB="$SMARTREDIS_DIR/install/lib"
+    fi
+
     mkdir -p "$FOAM_USER_DIR"
 
     cd "$SMARTSIM_CSC_DIR"
     ./scripts/openfoam/build-openfoam-v2412.sh
+
+    cd "$SMARTSIM_CSC_DIR/components/openfoam-smartsim/src/smartSimViscosityModel"
+    wclean
+    wmake libso
 
     export FOAM_USER_APPBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
     export FOAM_USER_LIBBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
@@ -812,6 +825,11 @@ if [ "$BUILD_OPENFOAM" = "yes" ]; then
             exit 1
         fi
     done
+
+    if [ ! -f "$FOAM_USER_LIBBIN/libsmartSimViscosityModels.so" ]; then
+        echo "ERROR: Missing OpenFOAM library: $FOAM_USER_LIBBIN/libsmartSimViscosityModels.so"
+        exit 1
+    fi
 
     if ldd "$FOAM_USER_APPBIN/foamSmartSimSvdDBAPI" | grep -q "not found"; then
         echo "ERROR: OpenFOAM executable has unresolved shared libraries."
@@ -838,15 +856,9 @@ echo "[9/11] Creating loader and update tooling..."
 
 cat <<'EOF' > "$BASE_SCRATCH/Python4SmartSim.sh"
 #!/bin/bash
-#
-# SmartSim Python environment loader (Roihu only)
-#
-# Usage:
-#   source /scratch/<project>/<user>/Utilities/Python4SmartSim.sh
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    echo "This file must be sourced, not executed:"
-    echo "    source ${BASH_SOURCE[0]}"
+    echo "Source this file instead of executing it: source ${BASH_SOURCE[0]}"
     exit 1
 fi
 
@@ -863,6 +875,7 @@ export BASE_SCRATCH="/scratch/$CSC_PROJECT/$PROJECT_USER_DIR/Utilities"
 export PYTHON_BASE="$BASE_SCRATCH/Python"
 export PYTHON_ROOT="$PYTHON_BASE/PythonSmartSim"
 export SMARTSIM_CSC_DIR="$PYTHON_ROOT/src/SmartSim-CSC"
+export FOAMPILOT_SRC="$SMARTSIM_CSC_DIR/components/openfoam-smartsim/python"
 
 case "$(uname -m)" in
     x86_64)
@@ -885,40 +898,25 @@ esac
 
 export ENV_PREFIX="$PYTHON_ROOT/envs/$ENV_NICKNAME-3.12-$ENV_ARCH"
 export SMARTREDIS_DIR="$BASE_SCRATCH/SmartRedis-$ENV_ARCH"
+export SMARTREDIS_INCLUDE="$SMARTSIM_CSC_DIR/components/smartredis/include"
+export SMARTREDIS_DEP_INCLUDE="$SMARTREDIS_DIR/install/include"
 export OPENFOAM_USER_DIR="$BASE_SCRATCH/OpenFOAM/OpenFOAM-v2412"
 
 if [ ! -x "$ENV_PREFIX/bin/python" ]; then
-    echo "Python environment not found:"
-    echo "    $ENV_PREFIX"
+    echo "Python environment not found: $ENV_PREFIX"
     return 1
 fi
 
 if [ ! -d "$SMARTREDIS_DIR/install" ]; then
-    echo "SmartRedis installation not found:"
-    echo "    $SMARTREDIS_DIR/install"
+    echo "SmartRedis installation not found: $SMARTREDIS_DIR/install"
     return 1
 fi
 
 RUNTIME_CONFIG="$PYTHON_ROOT/runtime-$ENV_ARCH.sh"
+[ -f "$RUNTIME_CONFIG" ] && source "$RUNTIME_CONFIG"
 
-if [ -f "$RUNTIME_CONFIG" ]; then
-    source "$RUNTIME_CONFIG"
-fi
-
-# Default to "yes" for backward compatibility with environments built
-# before this flag existed (they always installed PySR/Julia).
 : "${SMARTSIM_PYSR_ENABLED:=yes}"
 : "${SMARTSIM_OPENFOAM_ENABLED:=no}"
-
-if [ -n "${SMARTSIM_GCC_MODULE:-}" ] && command -v module >/dev/null 2>&1; then
-    module is-loaded "$SMARTSIM_GCC_MODULE" 2>/dev/null ||
-        module load "$SMARTSIM_GCC_MODULE"
-fi
-
-if [ -n "${SMARTSIM_CUDA_MODULE:-}" ] && command -v module >/dev/null 2>&1; then
-    module is-loaded "$SMARTSIM_CUDA_MODULE" 2>/dev/null ||
-        module load "$SMARTSIM_CUDA_MODULE"
-fi
 
 path_prepend() {
     local variable_name="$1"
@@ -926,8 +924,7 @@ path_prepend() {
     local current_value="${!variable_name-}"
 
     case ":$current_value:" in
-        *":$directory:"*)
-            ;;
+        *":$directory:"*) ;;
         *)
             printf -v "$variable_name" '%s' \
                 "$directory${current_value:+:$current_value}"
@@ -938,31 +935,50 @@ path_prepend() {
 
 if [ -d "$SMARTREDIS_DIR/install/lib64" ]; then
     export SMARTREDIS_LIB_DIR="$SMARTREDIS_DIR/install/lib64"
-elif [ -d "$SMARTREDIS_DIR/install/lib" ]; then
-    export SMARTREDIS_LIB_DIR="$SMARTREDIS_DIR/install/lib"
 else
-    echo "SmartRedis library directory not found."
-    return 1
+    export SMARTREDIS_LIB_DIR="$SMARTREDIS_DIR/install/lib"
+fi
+export SMARTREDIS_LIB="$SMARTREDIS_LIB_DIR"
+
+if [ "$SMARTSIM_OPENFOAM_ENABLED" = "yes" ] && [ "$ENV_ARCH" = "x64" ]; then
+    if command -v module >/dev/null 2>&1; then
+        module --force purge
+        module load gcc/15.2.0 openmpi/5.0.10 openfoam/2412
+    fi
+
+    export FOAM_USER_DIR="$OPENFOAM_USER_DIR"
+    export WM_PROJECT_USER_DIR="$OPENFOAM_USER_DIR"
+    export FOAM_USER_APPBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
+    export FOAM_USER_LIBBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
+
+    path_prepend PATH "$FOAM_USER_APPBIN"
+    path_prepend LD_LIBRARY_PATH "$FOAM_USER_LIBBIN"
+else
+    if [ -n "${SMARTSIM_GCC_MODULE:-}" ] && command -v module >/dev/null 2>&1; then
+        module is-loaded "$SMARTSIM_GCC_MODULE" 2>/dev/null ||
+            module load "$SMARTSIM_GCC_MODULE"
+    fi
+
+    if [ -n "${SMARTSIM_CUDA_MODULE:-}" ] && command -v module >/dev/null 2>&1; then
+        module is-loaded "$SMARTSIM_CUDA_MODULE" 2>/dev/null ||
+            module load "$SMARTSIM_CUDA_MODULE"
+    fi
 fi
 
 path_prepend PATH "$ENV_PREFIX/bin"
+path_prepend PYTHONPATH "$FOAMPILOT_SRC"
 path_prepend LD_LIBRARY_PATH "$SMARTREDIS_LIB_DIR"
 path_prepend CMAKE_PREFIX_PATH "$SMARTREDIS_DIR/install"
 
 export SMARTSIM_DB_FILE_PARSE_TRIALS=600
-
 export PYTHON_PREFIX="$("$ENV_PREFIX/bin/python" -c 'import sys; print(sys.prefix)')"
 
 if [ "$SMARTSIM_PYSR_ENABLED" = "yes" ]; then
-    # PySR / Julia runtime paths - prepared ONCE at build time; this loader
-    # only points environment variables at them.
     export JULIA_ENV_RUNTIME="$BASE_SCRATCH/.julia_env_runtime_$ENV_ARCH"
     export JULIA_DEPOT_RUNTIME="$BASE_SCRATCH/.julia_depot_runtime_$ENV_ARCH"
 
     if [ ! -d "$JULIA_ENV_RUNTIME" ]; then
-        echo "Writable Julia environment not found:"
-        echo "    $JULIA_ENV_RUNTIME"
-        echo "Run the SmartSim installer again for $ENV_ARCH."
+        echo "Writable Julia environment not found: $JULIA_ENV_RUNTIME"
         return 1
     fi
 
@@ -973,11 +989,8 @@ if [ "$SMARTSIM_PYSR_ENABLED" = "yes" ]; then
     export PYTHON_JULIAPKG_OFFLINE="yes"
     export PYTHON_JULIACALL_THREADS="${SLURM_CPUS_PER_TASK:-auto}"
 
-    unset PYTHON_JULIACALL_EXE
-    unset PYTHON_JULIACALL_PROJECT
+    unset PYTHON_JULIACALL_EXE PYTHON_JULIACALL_PROJECT
 else
-    # This architecture was built with INSTALL_PYSR=no - make sure no
-    # stale Julia environment variables leak in from a previous session.
     unset JULIA_ENV_RUNTIME JULIA_DEPOT_RUNTIME
     unset PYTHON_JULIAPKG_PROJECT JULIA_DEPOT_PATH PYTHON_JULIAPKG_OFFLINE
     unset PYTHON_JULIACALL_THREADS PYTHON_JULIACALL_EXE PYTHON_JULIACALL_PROJECT
@@ -988,20 +1001,10 @@ export JUPYTER_KERNEL_DISPLAY="Python 3.12 ($ENV_NICKNAME SmartSim $KERNEL_ARCH)
 export JUPYTER_KERNEL_DIR="$HOME/.local/share/jupyter/kernels/$JUPYTER_KERNEL_NAME"
 
 if [ "${SMARTSIM_ENV_QUIET:-0}" != "1" ]; then
-    echo "SmartSim Python environment loaded"
-    echo "ENV_ARCH=$ENV_ARCH"
-    echo "ENV_PREFIX=$ENV_PREFIX"
-    echo "SMARTSIM_CSC_DIR=$SMARTSIM_CSC_DIR"
-    echo "SMARTSIM_CSC_PROFILE=$SMARTSIM_CSC_PROFILE"
-    echo "SMARTREDIS_DIR=$SMARTREDIS_DIR"
-    echo "JAX_PLATFORMS=$JAX_PLATFORMS"
-    echo "SMARTSIM_PYSR_ENABLED=$SMARTSIM_PYSR_ENABLED"
-    echo "SMARTSIM_OPENFOAM_ENABLED=$SMARTSIM_OPENFOAM_ENABLED"
-    if [ "$SMARTSIM_OPENFOAM_ENABLED" = "yes" ]; then
-        echo "OPENFOAM_USER_DIR=$OPENFOAM_USER_DIR"
-    fi
-    if [ "$SMARTSIM_PYSR_ENABLED" = "yes" ]; then
-        echo "PYTHON_JULIAPKG_PROJECT=$PYTHON_JULIAPKG_PROJECT"
+    if [ "$SMARTSIM_OPENFOAM_ENABLED" = "yes" ] && [ "$ENV_ARCH" = "x64" ]; then
+        echo "SmartSim environment loaded: $ENV_NICKNAME ($ENV_ARCH), OpenFOAM v2412"
+    else
+        echo "SmartSim environment loaded: $ENV_NICKNAME ($ENV_ARCH)"
     fi
 fi
 
@@ -1295,54 +1298,6 @@ if command -v jupyter >/dev/null 2>&1; then
 fi
 
 echo "[11/11] Installation complete."
-echo "=================================================================="
-echo
-echo "Load the environment:"
-echo "    source \"$BASE_SCRATCH/Python4SmartSim.sh\""
-echo
-echo "Update or add packages:"
-echo "    smartsim-update pydantic"
-echo "    smartsim-update loguru pyinstrument"
-echo
-echo "To update the SmartSim-CSC stack itself, pin a new SMARTSIM_CSC_REF"
-echo "and rerun this installer for the current architecture."
-echo
-if [ "$BUILD_OPENFOAM" = "yes" ]; then
-    echo "To use the OpenFOAM integration in a new shell:"
-    echo "    module --force purge"
-    echo "    source \"$BASE_SCRATCH/Python4SmartSim.sh\""
-    echo "    export FOAM_USER_DIR=\"$OPENFOAM_USER_DIR\""
-    echo "    module load gcc/15.2.0 openmpi/5.0.10 openfoam/2412"
-    echo "    export FOAM_USER_APPBIN=\"\$FOAM_USER_DIR/platforms/\$WM_OPTIONS/bin\""
-    echo "    export FOAM_USER_LIBBIN=\"\$FOAM_USER_DIR/platforms/\$WM_OPTIONS/lib\""
-    echo "    export PATH=\"\$FOAM_USER_APPBIN:\$PATH\""
-    echo "    export LD_LIBRARY_PATH=\"\$FOAM_USER_LIBBIN\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\""
-    echo "Do not source Python4SmartSim.sh again after loading OpenFOAM."
-    echo
-fi
-echo "The environment uses Python 3.12 and includes:"
-echo "    JAX + Equinox"
-echo "    TensorFlow 2.18.1"
-echo "    PyTorch 2.7.1"
-echo "    ONNX + ONNX Runtime"
-if [ "$INSTALL_PYSR" = "yes" ]; then
-    echo "    PySR + JuliaCall"
-else
-    echo "    PySR + JuliaCall: SKIPPED (INSTALL_PYSR=no for $ENV_ARCH)"
-fi
-echo "    SmartSim-CSC unified stack"
-echo "    FoamPilot CSC 0.1.2 (import: foampilot)"
-if [ "$BUILD_OPENFOAM" = "yes" ]; then
-    echo "    OpenFOAM.com v2412 SmartRedis integration (x86_64)"
-else
-    echo "    OpenFOAM.com v2412 integration: SKIPPED"
-fi
-echo "    RedisAI ONNX Runtime + JAX backends selected by stack.toml"
-echo
-echo "No SmartSim, SmartRedis, or OpenFOAM source patching was applied."
-echo
-echo "Run the script again on the other architecture when both x64 and"
-echo "arm64 Roihu environments are required. Each architecture asks for"
-echo "its own PySR/Julia choice, and it is recorded in:"
-echo "    $PYTHON_ROOT/install-options-$ENV_ARCH.sh"
-echo "Use the same identity values."
+echo "Load with: source \"$BASE_SCRATCH/Python4SmartSim.sh\""
+echo "Update packages with: smartsim-update <package>"
+echo "SmartSim-CSC ref: $SMARTSIM_CSC_REF"
