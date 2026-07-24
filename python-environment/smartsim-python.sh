@@ -785,7 +785,12 @@ if [ "$BUILD_OPENFOAM" = "yes" ]; then
     module load openmpi/5.0.10
     module load openfoam/2412
 
+    # Override CSC module defaults with this user's project-scoped location.
     export FOAM_USER_DIR="$OPENFOAM_USER_DIR"
+    export WM_PROJECT_USER_DIR="$OPENFOAM_USER_DIR"
+    export FOAM_USER_APPBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
+    export FOAM_USER_LIBBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
+
     export SMARTREDIS_INCLUDE="$SMARTREDIS_DIR/install/include"
     export SMARTREDIS_DEP_INCLUDE="$SMARTREDIS_DIR/install/include"
 
@@ -795,13 +800,16 @@ if [ "$BUILD_OPENFOAM" = "yes" ]; then
         export SMARTREDIS_LIB="$SMARTREDIS_DIR/install/lib"
     fi
 
-    mkdir -p "$FOAM_USER_DIR"
+    mkdir -p "$FOAM_USER_APPBIN" "$FOAM_USER_LIBBIN"
 
     cd "$SMARTSIM_CSC_DIR"
     ./scripts/openfoam/build-openfoam-v2412.sh
 
-    export FOAM_USER_APPBIN="$FOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
-    export FOAM_USER_LIBBIN="$FOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
+    # Reassert project-scoped paths in the installer shell before validation.
+    export FOAM_USER_DIR="$OPENFOAM_USER_DIR"
+    export WM_PROJECT_USER_DIR="$OPENFOAM_USER_DIR"
+    export FOAM_USER_APPBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
+    export FOAM_USER_LIBBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
 
     if [ -d "$SMARTREDIS_DIR/install/lib64" ]; then
         SMARTREDIS_LIB_DIR="$SMARTREDIS_DIR/install/lib64"
@@ -1298,4 +1306,4 @@ fi
 echo "[11/11] Installation complete."
 echo "Load with: source \"$BASE_SCRATCH/Python4SmartSim.sh\""
 echo "Update packages with: smartsim-update <package>"
-echo "SmartSim-CSC ref: $SMARTSIM_CSC_REF"
+echo "SmartSim-CSC ref: ${SMARTSIM_CSC_REF:-fc599b9}"
