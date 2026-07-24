@@ -727,7 +727,12 @@ module load gcc/15.2.0
 module load openmpi/5.0.10
 module load openfoam/2412
 
+# Override CSC module defaults with this user's project-scoped location.
 export FOAM_USER_DIR="$OPENFOAM_USER_DIR"
+export WM_PROJECT_USER_DIR="$OPENFOAM_USER_DIR"
+export FOAM_USER_APPBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
+export FOAM_USER_LIBBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
+
 export SMARTREDIS_INCLUDE="$SMARTSIM_CSC_DIR/components/smartredis/include"
 export SMARTREDIS_DEP_INCLUDE="$SMARTREDIS_DIR/install/include"
 
@@ -737,11 +742,16 @@ else
     export SMARTREDIS_LIB="$SMARTREDIS_DIR/install/lib"
 fi
 
+mkdir -p "$FOAM_USER_APPBIN" "$FOAM_USER_LIBBIN"
+
 cd "$SMARTSIM_CSC_DIR"
 ./scripts/openfoam/build-openfoam-v2412.sh
 
-export FOAM_USER_APPBIN="$FOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
-export FOAM_USER_LIBBIN="$FOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
+# Reassert the same project-scoped paths before verification.
+export FOAM_USER_DIR="$OPENFOAM_USER_DIR"
+export WM_PROJECT_USER_DIR="$OPENFOAM_USER_DIR"
+export FOAM_USER_APPBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/bin"
+export FOAM_USER_LIBBIN="$OPENFOAM_USER_DIR/platforms/$WM_OPTIONS/lib"
 ```
 
 Installed outputs include:
